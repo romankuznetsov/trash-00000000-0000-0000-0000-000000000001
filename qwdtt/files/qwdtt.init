@@ -1,0 +1,105 @@
+#!/bin/sh /etc/rc.common
+
+USE_PROCD=1
+
+LOGFILE=/var/log/qwdtt.log
+START=95
+STOP=10
+
+start_service() {
+	local enabled mode peer_host peer_port password device_id workers
+	local dns obfs captcha_mode vk_auth vk_anon_path tun_name lan_interface
+	local no_dtls turn_tcp hashes bools
+
+	config_load qwdtt
+	config_get_bool enabled main enabled 0
+	[ "$enabled" -eq 1 ] || return 0
+
+	# mode is passed explicitly: the client derives its own default from
+	# whether -config was given, and this service never gives it.
+	config_get mode          main mode rawtun
+	config_get peer_host     main peer_host
+	config_get peer_port     main peer_port
+	config_get password      main password
+	config_get device_id     main device_id
+	config_get workers       main workers 9
+	config_get dns           main dns yandex
+	config_get obfs          main obfs audio
+	config_get captcha_mode  main captcha_mode auto
+	config_get vk_auth       main vk_auth anonymous
+	config_get vk_anon_path  main vk_anon_path vkcalls
+	config_get tun_name      main tun_name qwdtt0
+	config_get lan_interface main lan_interface
+	config_get_bool no_dtls  main no_dtls 0
+	config_get_bool turn_tcp main turn_tcp 0
+
+	# The client wants one comma-separated -vk value; UCI lists arrive
+	# space-separated and a VK hash contains no spaces.
+	config_get hashes main hash
+	hashes=$(echo "$hashes" | tr -s ' ' ',' | sed -e 's/^,//' -e 's/,$//')
+
+	[ -n "$peer_host" ] || {
+		logger -t qwdtt "qwdtt.main.peer_host is not set"
+		return 1
+	}
+	[ -n "$hashes" ] || {
+		logger -t qwdtt "qwdtt.main.hash is empty"
+		return 1
+	}
+
+	# Only passed when on: Go's flag package reads a bare -notls as true.
+	bools=""
+	[ "$no_dtls" -eq 1 ] && bools="$bools -notls"
+	[ "$turn_tcp" -eq 1 ] && bools="$bools -turn-tcp"
+
+	# Values go through the environment rather than being interpolated into
+	# the snippet, so a password containing a quote cannot break the command
+	# line.
+	procd_open_instance
+	procd_set_param env \
+		QW_MODE="$mode" \
+		QW_PEER="${peer_host}${peer_port:+:$peer_port}" \
+		QW_VK="$hashes" \
+		QW_PASSWORD="$password" \
+		QW_DEVICE_ID="$device_id" \
+		QW_WORKERS="$workers" \
+		QW_DNS="$dns" \
+		QW_OBFS="$obfs" \
+		QW_CAPTCHA="$captcha_mode" \
+		QW_VK_AUTH="$vk_auth" \
+		QW_VK_ANON_PATH="$vk_anon_path" \
+		QW_TUN_NAME="$tun_name" \
+		QW_LAN_IFACE="$lan_interface" \
+		QW_BOOLS="$bools" \
+		TZ="$(uci -q get system.@system[0].zonename)"
+	# Output to LOGFILE, not procd's syslog: the client prints a statistics
+	# line every three seconds, which would flood logread.
+	procd_set_param command /bin/sh -c 'exec /usr/bin/qwdtt-client \
+		-mode "$QW_MODE" \
+		-peer "$QW_PEER" \
+		-vk "$QW_VK" \
+		-password "$QW_PASSWORD" \
+		-device-id "$QW_DEVICE_ID" \
+		-n "$QW_WORKERS" \
+		-go-dns "$QW_DNS" \
+		-obfs "$QW_OBFS" \
+		-captcha-mode "$QW_CAPTCHA" \
+		-vk-auth "$QW_VK_AUTH" \
+		-vk-anon-path "$QW_VK_ANON_PATH" \
+		-tun-name "$QW_TUN_NAME" \
+		${QW_LAN_IFACE:+-lan-interface "$QW_LAN_IFACE"} \
+		$QW_BOOLS >>'"$LOGFILE"' 2>&1'
+	procd_set_param respawn 10 5 0
+	procd_set_param limits nofile="65535 65535"
+	procd_close_instance
+}
+
+service_triggers() {
+	procd_add_reload_trigger qwdtt
+	# netchange rather than restart: uplink events arrive in bursts before the
+	# routes are final, and restarting then yields a session that handshakes
+	# and carries nothing.
+	for iface in wan; do
+		procd_add_interface_trigger "interface.*" "$iface" /usr/bin/qwdtt netchange
+	done
+}
