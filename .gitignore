@@ -1,2 +1,23 @@
-qwdtt-client*
+# Stray client binaries at the repository root, e.g. qwdtt-client-aarch64 from
+# a hand-run cross build. The plain name qwdtt-client is not listed because it
+# is the package directory now; builds write into dist/ instead.
+/qwdtt-client-*
 *.tar.gz
+
+# Output of `./build.sh` and of the release workflow's Go cross-build. The SDK
+# container moves its bin/ and logs/ in here, so the whole directory is output.
+/dist/
+
+# SDK output, if a build is ever run inside the checkout
+/bin/
+/build_dir/
+/staging_dir/
+/logs/
+/tmp/
+*.ipk
+*.apk
+
+# editor and OS noise
+*.swp
+*~
+.DS_Store
