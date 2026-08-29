@@ -275,16 +275,38 @@ jobs:
           merge-multiple: true
           path: dist
 
+      # A release asset is named by its basename, and an apk filename carries no
+      # architecture: both client builds arrive as qwdtt-client-<version>.apk
+      # and would collide, leaving one architecture unpublished. The
+      # architecture is the first path component inside the artifact, so fold
+      # it into the name. The .ipk side already carries an arch suffix.
+      - name: Name the client packages after their architecture
+        run: |
+          for f in dist/*/qwdtt/qwdtt-client-*.apk; do
+            [ -e "$f" ] || continue
+            arch=$(basename "$(dirname "$(dirname "$f")")")
+            mv "$f" "dist/$(basename "$f" .apk)-$arch.apk"
+          done
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          find dist -type f \
-            \( -name '*.tar.gz' -o -name '*.ipk' -o -name '*.apk' \) -print |
-            sort
-          gh release create "${GITHUB_REF_NAME}" \
-            $(find dist -type f \
-                \( -name '*.tar.gz' -o -name '*.ipk' -o -name '*.apk' \)) \
+          assets=$(find dist -type f \
+            \( -name '*.tar.gz' -o -name '*.ipk' -o -name '*.apk' \) | sort)
+          echo "$assets"
+
+          # Fail loudly rather than let the upload silently drop one of a pair:
+          # assets are keyed by basename, so two files sharing one cannot both
+          # be published.
+          dupes=$(echo "$assets" | xargs -n1 basename | sort | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "duplicate asset names:"
+            echo "$dupes"
+            exit 1
+          fi
+
+          gh release create "${GITHUB_REF_NAME}" $assets \
             --repo "$GITHUB_REPOSITORY" \
             --title "qWDTT ${GITHUB_REF_NAME}" \
             --generate-notes
