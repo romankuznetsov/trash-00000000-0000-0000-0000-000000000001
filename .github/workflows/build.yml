@@ -308,5 +308,5 @@ jobs:
 
           gh release create "${GITHUB_REF_NAME}" $assets \
             --repo "$GITHUB_REPOSITORY" \
-            --title "qWDTT ${GITHUB_REF_NAME}" \
+            --title "qWDTT OpenWrt ${GITHUB_REF_NAME}" \
             --generate-notes
