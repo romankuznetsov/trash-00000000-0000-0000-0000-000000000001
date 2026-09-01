@@ -1,5 +1,10 @@
 # qWDTT OpenWrt
 
+[![Build](https://github.com/romankuznetsov/qwdtt-openwrt/actions/workflows/build.yml/badge.svg)](https://github.com/romankuznetsov/qwdtt-openwrt/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/romankuznetsov/qwdtt-openwrt)](https://github.com/romankuznetsov/qwdtt-openwrt/releases/latest)
+[![Release date](https://img.shields.io/github/release-date/romankuznetsov/qwdtt-openwrt)](https://github.com/romankuznetsov/qwdtt-openwrt/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/romankuznetsov/qwdtt-openwrt/total)](https://github.com/romankuznetsov/qwdtt-openwrt/releases)
+
 RAW-IP клиент qWDTT для роутеров OpenWrt. Он поднимает интерфейс `qwdtt0` и
 направляет через туннель IPv4-трафик устройств локальной сети. Сам роутер
 сохраняет прямой доступ к WAN, поэтому соединения с VK TURN не зацикливаются.
@@ -9,44 +14,98 @@ RAW-IP клиент qWDTT для роутеров OpenWrt. Он поднимае
 
 ## Что понадобится
 
-- Роутер с OpenWrt 25.12+ или совместимой версией с `procd` и `firewall4`.
-- Пакеты `ip-full`, `kmod-tun`, `ca-bundle`.
+- Роутер с OpenWrt 24.10 или новее, с `procd` и `firewall4`. На 24.10 пакеты
+  ставятся через `opkg`, на 25.12 и новее - через `apk`.
+- Пакеты `ip-full`, `kmod-tun`, `ca-bundle` - устанавливаются автоматически
+  вместе с пакетами qWDTT.
 - Сервер qWDTT с включённым RAW-слушателем. Обычно это UDP-порт `56003`.
 - Данные подключения: адрес сервера, пароль и хеш звонка VK.
 
 ## Быстрый запуск
 
-1. Откройте [Releases](../../releases/latest) и скачайте архив для архитектуры
-   своего роутера. Сборки во вкладке [Actions](../../actions/workflows/build.yml)
-   нужны только для тестирования новых изменений до выпуска релиза.
-2. Распакуйте архив на роутере и запустите установку от `root`:
+Два способа установить пакеты. Настройка после установки одинаковая - см.
+раздел "После установки".
 
-   ```sh
-   tar -xzf qwdtt-openwrt-aarch64.tar.gz
-   cd qwdtt-openwrt-aarch64
-   ./install.sh
+### Способ 1: через LuCI (без SSH)
+
+Полностью через веб-интерфейс. Порядок зависит от менеджера пакетов: `apk` на
+OpenWrt 25.x, `opkg` на 24.10.
+
+#### OpenWrt 25.x (apk)
+
+Отдельные `.apk` не подписаны, поэтому доверие дает ключ feed, а не загрузка
+файлов пакетов - загруженный через LuCI пакет ставится недоверенным.
+
+1. Установите ключ доверия. Скачайте `qwdtt-apk-key.tar.gz` со страницы
+   [Releases](../../releases/latest) и восстановите архив в
+   System -> Backup / Flash Firmware -> "Restore". Он кладет публичный ключ в
+   `/etc/apk/keys` - без него feed недоверенный.
+2. Добавьте feed. В System -> Software -> Configuration допишите строку для
+   своей архитектуры (полный список - на
+   [странице feed](https://romankuznetsov.github.io/qwdtt-openwrt/)), например
+   для `aarch64_cortex-a53`:
+
+   ```
+   https://romankuznetsov.github.io/qwdtt-openwrt/releases/25.12/aarch64_cortex-a53/packages.adb
    ```
 
-3. Если установщик попросил зависимости, установите их и запустите его ещё раз:
+   Сохраните, затем нажмите "Update lists…".
+3. В System -> Software установите пакеты `qwdtt`, `luci-app-qwdtt`,
+   `qwdtt-client` и `ip-full`.
 
-   ```sh
-   apk update && apk add ip-full kmod-tun ca-bundle
+#### OpenWrt 24.10 (opkg)
+
+Порядок тот же, что и для 25.x, но feed и ключ - свои: opkg читает индекс
+`Packages` и проверяет его подпись через `usign`.
+
+1. Установите ключ доверия. Скачайте `qwdtt-opkg-key.tar.gz` со страницы
+   [Releases](../../releases/latest) и восстановите архив в
+   System -> Backup / Flash Firmware -> "Restore". Он кладет публичный ключ в
+   `/etc/opkg/keys` под именем его key id.
+2. Добавьте feed. В System -> Software -> Configuration допишите строку для
+   своей архитектуры, например для `mips_24kc`:
+
+   ```
+   src/gz qwdtt https://romankuznetsov.github.io/qwdtt-openwrt/releases/24.10/mips_24kc
    ```
 
-   На старых версиях OpenWrt вместо этого:
+   Сохраните, затем нажмите "Update lists…".
+3. В System -> Software установите пакеты `qwdtt`, `luci-app-qwdtt`,
+   `qwdtt-client` и `ip-full`.
+
+### Способ 2: одной командой (SSH)
+
+От `root` на роутере (OpenWrt 25.x с `apk` или 24.10 с `opkg`):
+
+```sh
+wget -qO- https://raw.githubusercontent.com/romankuznetsov/qwdtt-openwrt/main/install.sh | sh
+```
+
+Скрипт сам определяет менеджер пакетов, добавляет подписанный feed и его ключ
+доверия, затем ставит `qwdtt`, `luci-app-qwdtt`, `qwdtt-client` и зависимости.
+Флаг `-e` пропускает русский перевод LuCI.
+
+### После установки
+
+1. Задайте адрес сервера, пароль и хеши звонка - через LuCI
+   (Services -> qWDTT -> Settings) или через UCI:
 
    ```sh
-   opkg update && opkg install ip-full kmod-tun ca-bundle
-   ```
-
-4. Откройте `/etc/qwdtt/config.json` и заполните `peer`, `hashes` и `password`.
-   Пароль и хеш нельзя публиковать или отправлять посторонним.
-5. Включите сервис:
-
-   ```sh
-   uci set qwdtt.main.enabled='1'
+   uci set qwdtt.main.peer_host='IP_АДРЕС_СЕРВЕРА'
+   uci set qwdtt.main.peer_port='56003'
+   uci set qwdtt.main.password='ПАРОЛЬ'
+   uci add_list qwdtt.main.hash='ХЕШ_ЗВОНКА'
    uci commit qwdtt
-   /etc/init.d/qwdtt start
+   ```
+
+   Пароль и хеш нельзя публиковать или отправлять посторонним.
+
+2. Включите автозапуск и запустите сервис - кнопкой Start на странице
+   Services -> qWDTT в LuCI, или из шелла:
+
+   ```sh
+   /etc/init.d/qwdtt enable
+   /usr/bin/qwdtt start
    ```
 
 ## Проверка
@@ -74,9 +133,11 @@ ip route show table 51820
 
 ## Настройка
 
-Пример файла находится в [`files/etc/qwdtt/config.json`](files/etc/qwdtt/config.json).
+Все настройки хранятся в UCI (`/etc/config/qwdtt`) и правятся через LuCI
+(Services -> qWDTT -> Settings) или командой `uci`. Значения по умолчанию
+задает [`qwdtt/files/qwdtt.config`](qwdtt/files/qwdtt.config).
 
-`lan_interface` по умолчанию — `br-lan`. Если в вашей сборке OpenWrt LAN
+`lan_interface` по умолчанию - `br-lan`. Если в вашей сборке OpenWrt LAN
 называется иначе, поменяйте это поле. При изменении `tun_name` нужно также
 изменить устройство зоны `qwdtt` в конфигурации firewall.
 
@@ -93,6 +154,7 @@ ip route show table 51820
 | `x86_64` | x86-роутеры и виртуальные машины |
 | `aarch64` | современные ARM64-роутеры |
 | `armv7` | 32-битные ARMv7-устройства |
-| `mipsel` | старые MIPS little-endian роутеры |
+| `mipsel` | MIPS little-endian, в основном ramips |
+| `mips` | MIPS big-endian, в основном ath79 и lantiq |
 
 Перед скачиванием можно проверить архитектуру командой `uname -m`.
