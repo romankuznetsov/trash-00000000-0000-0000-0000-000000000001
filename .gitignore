@@ -21,3 +21,7 @@
 *.swp
 *~
 .DS_Store
+
+# Never commit a signing key. The apk private key lives in the repo secret
+# APK_PRIVATE_KEY and in a password manager, never here.
+*private-key*.pem

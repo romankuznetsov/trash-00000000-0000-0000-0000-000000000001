@@ -224,9 +224,15 @@ jobs:
       fail-fast: false
       matrix:
         # A Go binary is architecture-specific, so unlike the two packages
-        # above this needs one build per target. These two cover the routers
-        # this is deployed to; add an entry to serve another.
-        arch: [x86_64-25.12.5, aarch64_cortex-a53-25.12.5]
+        # above this needs one build per target. The first two are the routers
+        # this is deployed to; the other two are what most consumer hardware
+        # runs -- mipsel_24kc covers ath79 and ramips, arm_cortex-a7 covers
+        # mt7621 and ipq40xx. Add an entry to serve another.
+        arch:
+          - x86_64-25.12.5
+          - aarch64_cortex-a53-25.12.5
+          - mipsel_24kc-25.12.5
+          - arm_cortex-a7_neon-vfpv4-25.12.5
 
     steps:
       - name: Check out
@@ -260,6 +266,134 @@ jobs:
           path: logs/
           if-no-files-found: ignore
 
+  # A signed apk repository, which is the only way a LuCI-only user can install
+  # these. Uploading a package file through LuCI cannot work: its backend runs
+  # `apk add <file>` and never passes --allow-untrusted, and the individual
+  # .apk files are not signed with our key anyway -- OpenWrt's mkpkg takes no
+  # --sign, CONFIG_SIGNED_PACKAGES only signs the index. Signing the index here
+  # is what makes the packages trusted, because apk verifies the index and then
+  # trusts the packages by the hashes recorded in it.
+  feed:
+    name: publish feed
+    needs: [packages, client-packages]
+    # Dispatch too, for the same reason as client-packages: publishing a feed
+    # has enough moving parts that proving it should not cost a tag.
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      # The apk side only. The 24.10 artifacts are .ipk, which need a usign
+      # key-build and an opkg-style index rather than this one.
+      - name: Download the apk packages
+        uses: actions/download-artifact@v8
+        with:
+          name: packages-x86_64-25.12.5
+          path: staged
+
+      - name: Download the client packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: client-package-*
+          merge-multiple: true
+          path: staged
+
+      # Every architecture's directory gets that architecture's client plus the
+      # three noarch packages, so one feed URL serves a router everything.
+      - name: Assemble the feed
+        run: |
+          mkdir -p noarch
+          cp staged/x86_64/qwdtt/qwdtt-[0-9]*.apk \
+             staged/x86_64/qwdtt/luci-*.apk noarch/
+          for d in staged/*/qwdtt; do
+            arch=$(basename "$(dirname "$d")")
+            mkdir -p "site/packages/$arch"
+            cp "$d"/qwdtt-client-*.apk "site/packages/$arch/" 2>/dev/null || true
+            cp noarch/*.apk "site/packages/$arch/"
+          done
+          find site -name '*.apk' | sort
+
+      - name: Sign the index
+        env:
+          APK_PRIVATE_KEY: ${{ secrets.APK_PRIVATE_KEY }}
+        run: |
+          test -n "$APK_PRIVATE_KEY" || {
+            echo "APK_PRIVATE_KEY is not set; the feed would be unusable"
+            exit 1
+          }
+
+          # The key is handed to the container through the environment and
+          # written inside it, so it never lands in the workspace. As root,
+          # because the bind mount is owned by the runner and the image's own
+          # user is a different uid -- it has to write packages.adb back out.
+          #
+          # The SDK image carries apk; the action's own image is only this plus
+          # an entrypoint, so the base serves here.
+          docker run --rm --user 0:0 -e APK_PRIVATE_KEY \
+            -v "$PWD:/w" -w /w ghcr.io/openwrt/sdk:x86_64-25.12.5 \
+            sh -c 'umask 077
+                   printf "%s\n" "$APK_PRIVATE_KEY" > /tmp/key.pem
+                   for d in /w/site/packages/*; do
+                     ( cd "$d" && /builder/staging_dir/host/bin/apk mkndx \
+                         --allow-untrusted \
+                         --sign /tmp/key.pem \
+                         --output packages.adb *.apk ) || exit 1
+                   done'
+
+          sudo chown -R "$(id -u):$(id -g)" site
+          find site -name packages.adb -exec ls -l {} \;
+
+      # Verifying with the public key alone is the whole promise of the feed:
+      # if this passes, a router that trusts this key installs without
+      # --allow-untrusted.
+      - name: Verify the index against the published public key
+        run: |
+          cp keys/qwdtt.pem site/qwdtt.pem
+          docker run --rm -v "$PWD:/w" -w /w ghcr.io/openwrt/sdk:x86_64-25.12.5 \
+            sh -c 'mkdir -p /tmp/k && cp /w/keys/qwdtt.pem /tmp/k/
+                   for i in /w/site/packages/*/packages.adb; do
+                     printf "%s: " "$i"
+                     /builder/staging_dir/host/bin/apk verify --keys-dir /tmp/k "$i" || exit 1
+                   done'
+
+      - name: Write the landing page
+        run: |
+          repo_url="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}"
+          {
+            echo '<!doctype html><meta charset="utf-8">'
+            echo "<title>qWDTT OpenWrt feed</title>"
+            echo "<h1>qWDTT OpenWrt package feed</h1>"
+            echo "<p>Signed with <a href=\"qwdtt.pem\">qwdtt.pem</a>."
+            echo "Install that key once, then add one of these lines under"
+            echo "<em>System &rarr; Software &rarr; Configuration</em>:</p><pre>"
+            for d in site/packages/*; do
+              echo "$repo_url/packages/$(basename "$d")/packages.adb"
+            done
+            echo '</pre>'
+          } > site/index.html
+          cat site/index.html
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: Deploy to Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
+
   release:
     name: Publish release
     needs: [client, packages, client-packages]
@@ -269,6 +403,11 @@ jobs:
       contents: write
 
     steps:
+      # Needed for keys/qwdtt.pem below. A job that only downloads artifacts
+      # still starts with an empty workspace.
+      - name: Check out
+        uses: actions/checkout@v7
+
       - name: Download every artifact
         uses: actions/download-artifact@v8
         with:
@@ -287,6 +426,17 @@ jobs:
             arch=$(basename "$(dirname "$(dirname "$f")")")
             mv "$f" "dist/$(basename "$f" .apk)-$arch.apk"
           done
+
+      # The trust key, shaped as an OpenWrt backup archive. Restoring it under
+      # System -> Backup is the only way to place a file in /etc/apk/keys
+      # without shell access: LuCI's package-manager Configuration modal edits
+      # the repository lists and nothing else.
+      - name: Build the key archive
+        run: |
+          mkdir -p keyroot/etc/apk/keys
+          cp keys/qwdtt.pem keyroot/etc/apk/keys/qwdtt.pem
+          tar -C keyroot -czf dist/qwdtt-apk-key.tar.gz etc
+          tar -tzvf dist/qwdtt-apk-key.tar.gz
 
       - name: Publish
         env:

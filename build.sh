@@ -98,10 +98,20 @@ build() {
 	# the checkout after it exits 128. CI never hit it because the action
 	# chowns the workspace to 1000:1000 first, which is not an option when the
 	# mount is the caller's own tree.
+	# Signing is opt-in locally. Point QWDTT_SIGNING_KEY at the EC private key
+	# to reproduce what CI does; without it the SDK generates a throwaway key
+	# and the packages are untrusted everywhere, which is fine for a build
+	# check but not for anything a router should install.
+	_sign=""
+	if [ -n "${QWDTT_SIGNING_KEY:-}" ]; then
+		_sign=$(cat "$QWDTT_SIGNING_KEY")
+	fi
+
 	docker run --rm \
 		--env NO_SHFMT_CHECK=1 \
 		--env "FEEDNAME=$FEEDNAME" \
 		--env "PACKAGES=$_pkgs" \
+		--env "PRIVATE_KEY=$_sign" \
 		--volume "$_host:/feed" \
 		--volume "$_host/$_out:/artifacts" \
 		"$_image"
