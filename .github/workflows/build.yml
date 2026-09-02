@@ -111,14 +111,16 @@ jobs:
           GOMIPS: ${{ matrix.gomips }}
         run: go build -tags=openwrt -trimpath -ldflags="-s -w" -o ../dist/qwdtt-client .
 
-      # The standalone install path, kept for anyone not adding this as an
-      # OpenWrt feed. files/ here is upstream's own simple integration, not the
-      # richer per-device configuration that lives outside this repository.
+      # The binary and its licence, nothing else. The archive used to carry an
+      # installer and a files/ tree, but those shipped a second /etc/init.d/qwdtt
+      # and /etc/config/qwdtt on a UCI schema the LuCI page does not use, so the
+      # two install paths contradicted each other. Packages are the install
+      # path now; this is for dropping the binary somewhere by hand.
       - name: Pack archive
         run: |
-          cp -r install.sh files README.md LICENSE dist/
+          cp LICENSE dist/
           tar -C dist -czf "qwdtt-openwrt-${{ matrix.name }}.tar.gz" \
-            qwdtt-client install.sh files README.md LICENSE
+            qwdtt-client LICENSE
 
       - name: Upload archive
         uses: actions/upload-artifact@v7
