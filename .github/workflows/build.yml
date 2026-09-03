@@ -219,7 +219,11 @@ jobs:
     needs: check
     # Tags only. Each of these compiles a Go toolchain inside the SDK before it
     # compiles anything of ours, measured at ~30 minutes cold per architecture.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Also on manual dispatch, so a change to how the client is compiled can be
+    # proven across every architecture without spending a tag to find out.
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:

@@ -36,6 +36,18 @@ GO_PKG_TAGS:=openwrt
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
+# golang-package.mk hardcodes CGO_ENABLED=1 in GO_PKG_TARGET_VARS with no knob
+# to turn it off, and on mipsel that fails: assembling Go's own cgo runtime
+# stops with "gcc_mipsx.S: invalid operands `sw $18,12($29)'". Nothing here
+# needs cgo -- the release workflow has always cross-compiled this client with
+# CGO_ENABLED=0, for mipsle included -- so switch it off. These become shell
+# assignments prefixed to the build command, where a later duplicate wins.
+GO_PKG_VARS += CGO_ENABLED=0
+# ...and -linkmode external, which the same file sets unconditionally, needs
+# cgo. Clearing it leaves the toolchain's own internal linking, which is what
+# a static CGO_ENABLED=0 build wants anyway.
+GO_PKG_DEFAULT_LDFLAGS=
+
 # `feeds install` symlinks each package directory individually into
 # package/feeds/<feed>/, so CURDIR is that symlink and a plain $(CURDIR)/..
 # points at the feed's install directory rather than at this repository.
