@@ -1,10 +1,17 @@
 # One repository, three things to build: the Go client, the OpenWrt packages
 # that wrap it, and the standalone tarballs that predate them.
 #
-# The jobs are split by cost rather than by product. Everything except
-# client-packages finishes in minutes and runs on every push; client-packages
-# compiles a Go toolchain inside the SDK for each target architecture, which
-# takes about half an hour apiece, so it runs on tags only.
+# The jobs are split by cost rather than by product.
+#
+#   check, client      ~1 min, every push
+#   packages           ~10 min, only when a package directory changed
+#   client-packages    ~15 min per architecture, tags and dispatch only
+#   feed, release      tags and dispatch, this repository only
+#
+# Two thirds of a client-packages job is spent building the kernel (for
+# kmod-tun) and the Go toolchain, neither of which we change. Caching that in
+# a pre-built SDK image would cut it to about five minutes, and is worth doing
+# if releases ever become frequent.
 ---
 name: Build
 
@@ -32,8 +39,62 @@ env:
   GO_VERSION: "1.26.x"
 
 jobs:
+  # Most of the pipeline is wasted on a docs-only push. Diff the push here and
+  # let the build jobs gate on it: `code` guards the Go check and client build,
+  # `packages` guards the SDK packages. Tags and dispatches always build, so a
+  # release is never gated on a diff.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+      packages: ${{ steps.decide.outputs.packages }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide what needs building
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" != "push" ] ||
+             [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
+            echo "not a branch push: building everything"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "packages=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base="${{ github.event.before }}"
+          # A new branch reports an all-zero before, and a force-push can name
+          # a commit that no longer exists. Neither is a diff we can trust.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] ||
+             ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "no usable base commit: building everything"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "packages=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed=$(git diff --name-only "$base" "${{ github.sha }}")
+          echo "changed files:"; echo "$changed" | sed 's/^/  /'
+          if echo "$changed" | grep -qE '^client/|^\.github/workflows/'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$changed" | grep -qE '^(qwdtt|luci-app-qwdtt|qwdtt-client)/|^\.github/workflows/'; then
+            echo "packages=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "packages=false" >> "$GITHUB_OUTPUT"
+          fi
+
   check:
     name: check
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.packages == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -71,7 +132,8 @@ jobs:
 
   client:
     name: client ${{ matrix.name }}
-    needs: check
+    needs: [changes, check]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -132,7 +194,8 @@ jobs:
 
   packages:
     name: packages ${{ matrix.label }}
-    needs: check
+    needs: [changes, check]
+    if: needs.changes.outputs.packages == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -284,9 +347,14 @@ jobs:
     needs: [packages, client-packages]
     # Dispatch too, for the same reason as client-packages: publishing a feed
     # has enough moving parts that proving it should not cost a tag.
+    #
+    # Only on this repository: a fork has neither APK_PRIVATE_KEY nor a Pages
+    # site, so without the guard a contributor's dispatch goes red on
+    # something that is not their problem.
     if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      github.event_name == 'workflow_dispatch'
+      github.repository == 'romankuznetsov/qwdtt-openwrt' &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+       github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -403,7 +471,11 @@ jobs:
   release:
     name: Publish release
     needs: [client, packages, client-packages]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Same guard as the feed job: a fork tagging its own work should not try to
+    # publish a release here.
+    if: >-
+      github.repository == 'romankuznetsov/qwdtt-openwrt' &&
+      startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write

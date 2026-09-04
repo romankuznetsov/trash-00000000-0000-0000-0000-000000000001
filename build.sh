@@ -43,13 +43,25 @@ cd "$(dirname "$0")"
 
 usage() {
 	cat <<EOF
-usage: ./build.sh <command>
+usage: ./build.sh <command> [package...]
 
   ipk     build .ipk  (SDK $ARCH_IPK): $PACKAGES
   apk     build .apk  (SDK $ARCH_APK): $PACKAGES $PACKAGES_APK
   all     build both
   shell   interactive shell in the SDK container
   clean   remove $DISTDIR/
+
+Naming packages builds only those:
+
+  ./build.sh apk qwdtt              just the control script and service layer
+  ./build.sh apk luci-app-qwdtt     just the page (and its translations)
+
+Expect a modest saving, not a fast loop. Most of a local run is fixed SDK
+setup -- feeds, defconfig and the toolchain -- which happens whatever is
+being built; what a narrower list avoids is the other packages' compile,
+which in practice means qwdtt-client's Go build. This is for checking that a
+package still assembles, not for iterating. Iterate with 'go test' and
+'go build' in client/, which take seconds, and 'sh -n' on the shell scripts.
 
 Output lands in $DISTDIR/<sdk>/bin/packages/*/$FEEDNAME/, one directory per
 SDK so 'all' keeps both formats instead of the second wiping the first.
@@ -71,10 +83,15 @@ host_dir() {
 
 build() {
 	_arch=$1
+	shift
 	_image="sdk-$FEEDNAME:$_arch"
 	_pkgs=$PACKAGES
 	if [ "$_arch" = "$ARCH_APK" ]; then
 		_pkgs="$PACKAGES $PACKAGES_APK"
+	fi
+	# An explicit list replaces the default rather than adding to it.
+	if [ $# -gt 0 ]; then
+		_pkgs="$*"
 	fi
 	# One output directory per SDK. `all` calls this twice and the entrypoint
 	# ends with `mv bin/ /artifacts/`, so a single shared directory can only go
@@ -119,7 +136,12 @@ build() {
 	echo "--- built:"
 	find "$_out/bin" -type f \( -name '*.ipk' -o -name '*.apk' \) | sort
 
-	for _want in $_pkgs "luci-i18n-$FEEDNAME-ru"; do
+	_expect=$_pkgs
+	case " $_pkgs " in
+	*" luci-app-$FEEDNAME "*) _expect="$_pkgs luci-i18n-$FEEDNAME-ru" ;;
+	esac
+
+	for _want in $_expect; do
 		_n=$(find "$_out/bin" -type f \
 			\( -name "$_want*.ipk" -o -name "$_want*.apk" \) | wc -l)
 		if [ "$_n" -eq 0 ]; then
@@ -129,14 +151,17 @@ build() {
 	done
 }
 
-case "${1:-}" in
+_cmd=${1:-}
+[ $# -gt 0 ] && shift
+
+case "$_cmd" in
 ipk)
-	build "$ARCH_IPK" ;;
+	build "$ARCH_IPK" "$@" ;;
 apk)
-	build "$ARCH_APK" ;;
+	build "$ARCH_APK" "$@" ;;
 all)
-	build "$ARCH_IPK"
-	build "$ARCH_APK" ;;
+	build "$ARCH_IPK" "$@"
+	build "$ARCH_APK" "$@" ;;
 clean)
 	rm -rf "$DISTDIR" ;;
 shell)
@@ -145,11 +170,11 @@ shell)
 	docker run --rm -it \
 		--volume "$(host_dir):/feed" \
 		--entrypoint /bin/bash \
-		"ghcr.io/openwrt/sdk:${2:-$ARCH_IPK}" ;;
+		"ghcr.io/openwrt/sdk:${1:-$ARCH_IPK}" ;;
 '' | -h | --help | help)
 	usage ;;
 *)
-	echo "unknown command: $1" >&2
+	echo "unknown command: $_cmd" >&2
 	usage >&2
 	exit 2 ;;
 esac
