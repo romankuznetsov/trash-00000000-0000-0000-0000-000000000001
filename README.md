@@ -10,43 +10,42 @@ RAW-IP клиент qWDTT для роутеров OpenWrt. Он поднимае
 ## Что понадобится
 
 - Роутер с OpenWrt 25.12+ или совместимой версией с `procd` и `firewall4`.
-- Пакеты `ip-full`, `kmod-tun`, `ca-bundle`.
+- Пакеты `ip-full`, `kmod-tun`, `ca-bundle` - устанавливаются автоматически
+  вместе с пакетами qWDTT.
 - Сервер qWDTT с включённым RAW-слушателем. Обычно это UDP-порт `56003`.
 - Данные подключения: адрес сервера, пароль и хеш звонка VK.
 
 ## Быстрый запуск
 
-1. Откройте [Releases](../../releases/latest) и скачайте архив для архитектуры
-   своего роутера. Сборки во вкладке [Actions](../../actions/workflows/build.yml)
-   нужны только для тестирования новых изменений до выпуска релиза.
-2. Распакуйте архив на роутере и запустите установку от `root`:
+1. Установите пакеты одной командой от `root` (OpenWrt 25.x, `apk`):
 
    ```sh
-   tar -xzf qwdtt-openwrt-aarch64.tar.gz
-   cd qwdtt-openwrt-aarch64
-   ./install.sh
+   wget -qO- https://raw.githubusercontent.com/romankuznetsov/qwdtt-openwrt/main/install.sh | sh
    ```
 
-3. Если установщик попросил зависимости, установите их и запустите его ещё раз:
+   Скрипт добавляет подписанный feed и его ключ доверия, затем ставит `qwdtt`,
+   `luci-app-qwdtt`, `qwdtt-client` и зависимости. Флаг `-e` пропускает русский
+   перевод LuCI. На OpenWrt 24.10 и старше (`opkg`) feed недоступен - установите
+   пакеты вручную из [Releases](../../releases/latest).
+
+2. Задайте адрес сервера, пароль и хеши звонка - через LuCI
+   (Services -> qWDTT -> Settings) или через UCI:
 
    ```sh
-   apk update && apk add ip-full kmod-tun ca-bundle
-   ```
-
-   На старых версиях OpenWrt вместо этого:
-
-   ```sh
-   opkg update && opkg install ip-full kmod-tun ca-bundle
-   ```
-
-4. Откройте `/etc/qwdtt/config.json` и заполните `peer`, `hashes` и `password`.
-   Пароль и хеш нельзя публиковать или отправлять посторонним.
-5. Включите сервис:
-
-   ```sh
-   uci set qwdtt.main.enabled='1'
+   uci set qwdtt.main.peer_host='IP_АДРЕС_СЕРВЕРА'
+   uci set qwdtt.main.peer_port='56003'
+   uci set qwdtt.main.password='ПАРОЛЬ'
+   uci add_list qwdtt.main.hash='ХЕШ_ЗВОНКА'
    uci commit qwdtt
-   /etc/init.d/qwdtt start
+   ```
+
+   Пароль и хеш нельзя публиковать или отправлять посторонним.
+
+3. Включите автозапуск и запустите сервис:
+
+   ```sh
+   /etc/init.d/qwdtt enable
+   /usr/bin/qwdtt start
    ```
 
 ## Проверка
@@ -74,9 +73,11 @@ ip route show table 51820
 
 ## Настройка
 
-Пример файла находится в [`files/etc/qwdtt/config.json`](files/etc/qwdtt/config.json).
+Все настройки хранятся в UCI (`/etc/config/qwdtt`) и правятся через LuCI
+(Services -> qWDTT -> Settings) или командой `uci`. Значения по умолчанию
+задает [`qwdtt/files/qwdtt.config`](qwdtt/files/qwdtt.config).
 
-`lan_interface` по умолчанию — `br-lan`. Если в вашей сборке OpenWrt LAN
+`lan_interface` по умолчанию - `br-lan`. Если в вашей сборке OpenWrt LAN
 называется иначе, поменяйте это поле. При изменении `tun_name` нужно также
 изменить устройство зоны `qwdtt` в конфигурации firewall.
 
