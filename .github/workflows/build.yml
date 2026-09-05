@@ -139,17 +139,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # pkgarch is the OpenWrt package architecture for the 24.10 .ipk, the
+        # same four the 25.12 apk feed targets, so both cover identical
+        # hardware. name is the generic label the tarball carries.
         include:
           - name: x86_64
             goarch: amd64
+            pkgarch: x86_64
           - name: aarch64
             goarch: arm64
+            pkgarch: aarch64_cortex-a53
           - name: armv7
             goarch: arm
             goarm: "7"
+            pkgarch: arm_cortex-a7_neon-vfpv4
           - name: mipsel
             goarch: mipsle
             gomips: softfloat
+            pkgarch: mipsel_24kc
 
     steps:
       - name: Check out
@@ -189,6 +196,26 @@ jobs:
         with:
           name: tarball-${{ matrix.name }}
           path: qwdtt-openwrt-${{ matrix.name }}.tar.gz
+          if-no-files-found: error
+          retention-days: 90
+
+      # A 24.10 (opkg) .ipk from the same static binary. The 24.10 SDK cannot
+      # compile the Go client (Go floor), so this wraps the prebuilt ELF into an
+      # .ipk by hand -- no SDK Go toolchain, no signing. It is what lets a 24.10
+      # user install the client through LuCI with no SSH, next to the
+      # architecture-'all' .ipk the packages job builds; the 25.12 feed ships the
+      # client as a source-built .apk, so this is 24.10's counterpart. Version
+      # comes from the qwdtt-client Makefile so there is one source of truth.
+      - name: Pack the client ipk (OpenWrt 24.10, opkg)
+        run: |
+          ver="$(sed -n 's/^PKG_VERSION:=//p' qwdtt-client/Makefile)-$(sed -n 's/^PKG_RELEASE:=//p' qwdtt-client/Makefile)"
+          sh tools/pack-client-ipk.sh dist/qwdtt-client "${{ matrix.pkgarch }}" "$ver" dist
+
+      - name: Upload the client ipk
+        uses: actions/upload-artifact@v7
+        with:
+          name: client-ipk-${{ matrix.pkgarch }}
+          path: dist/qwdtt-client_*_${{ matrix.pkgarch }}.ipk
           if-no-files-found: error
           retention-days: 90
 

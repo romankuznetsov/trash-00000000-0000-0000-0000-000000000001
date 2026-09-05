@@ -17,18 +17,69 @@ RAW-IP клиент qWDTT для роутеров OpenWrt. Он поднимае
 
 ## Быстрый запуск
 
-1. Установите пакеты одной командой от `root` (OpenWrt 25.x, `apk`):
+Два способа установить пакеты. Настройка после установки одинаковая - см.
+раздел "После установки".
 
-   ```sh
-   wget -qO- https://raw.githubusercontent.com/romankuznetsov/qwdtt-openwrt/main/install.sh | sh
+### Способ 1: через LuCI (без SSH)
+
+Полностью через веб-интерфейс. Порядок зависит от менеджера пакетов: `apk` на
+OpenWrt 25.x, `opkg` на 24.10.
+
+#### OpenWrt 25.x (apk)
+
+Отдельные `.apk` не подписаны, поэтому доверие дает ключ feed, а не загрузка
+файлов пакетов - загруженный через LuCI пакет ставится недоверенным.
+
+1. Установите ключ доверия. Скачайте `qwdtt-apk-key.tar.gz` со страницы
+   [Releases](../../releases/latest) и восстановите архив в
+   System -> Backup / Flash Firmware -> "Restore". Он кладет публичный ключ в
+   `/etc/apk/keys` - без него feed недоверенный.
+2. Добавьте feed. В System -> Software -> Configuration допишите строку для
+   своей архитектуры (полный список - на
+   [странице feed](https://romankuznetsov.github.io/qwdtt-openwrt/)), например
+   для `aarch64_cortex-a53`:
+
+   ```
+   https://romankuznetsov.github.io/qwdtt-openwrt/packages/aarch64_cortex-a53/packages.adb
    ```
 
-   Скрипт добавляет подписанный feed и его ключ доверия, затем ставит `qwdtt`,
-   `luci-app-qwdtt`, `qwdtt-client` и зависимости. Флаг `-e` пропускает русский
-   перевод LuCI. На OpenWrt 24.10 и старше (`opkg`) feed недоступен - установите
-   пакеты вручную из [Releases](../../releases/latest).
+   Сохраните, затем нажмите "Update lists…".
+3. В System -> Software установите пакеты `qwdtt`, `luci-app-qwdtt`,
+   `qwdtt-client` и `ip-full`.
 
-2. Задайте адрес сервера, пароль и хеши звонка - через LuCI
+#### OpenWrt 24.10 (opkg)
+
+apk-feed недоступен, но opkg ставит локальный `.ipk` без подписи, поэтому
+загрузка файлов работает. Клиент здесь - `.ipk` с уже собранным бинарником, а не
+сборка из исходников: SDK 24.10 её не осилит.
+
+1. Со страницы [Releases](../../releases/latest) скачайте:
+   - `qwdtt_*.ipk` и `luci-app-qwdtt_*.ipk` (архитектура `all`);
+   - `qwdtt-client_*_<ARCH>.ipk` для своей архитектуры. Доступны четыре, те же,
+     что и в apk-feed для 25.x: `x86_64`, `aarch64_cortex-a53`,
+     `arm_cortex-a7_neon-vfpv4`, `mipsel_24kc`;
+   - при желании `luci-i18n-qwdtt-ru_*.ipk`.
+2. В System -> Software нажмите "Update lists…", затем установите зависимости
+   `ca-bundle`, `kmod-tun`, `ip-full` (поиском по списку).
+3. Там же кнопкой "Upload Package…" загрузите и установите каждый скачанный
+   `.ipk`.
+
+### Способ 2: одной командой (SSH)
+
+От `root` на роутере (OpenWrt 25.x, `apk`):
+
+```sh
+wget -qO- https://raw.githubusercontent.com/romankuznetsov/qwdtt-openwrt/main/install.sh | sh
+```
+
+Скрипт добавляет подписанный feed и его ключ доверия, затем ставит `qwdtt`,
+`luci-app-qwdtt`, `qwdtt-client` и зависимости. Флаг `-e` пропускает русский
+перевод LuCI. Для OpenWrt 24.10 и старше (`opkg`) apk-feed недоступен - см.
+Способ 1, раздел "OpenWrt 24.10".
+
+### После установки
+
+1. Задайте адрес сервера, пароль и хеши звонка - через LuCI
    (Services -> qWDTT -> Settings) или через UCI:
 
    ```sh
@@ -41,7 +92,8 @@ RAW-IP клиент qWDTT для роутеров OpenWrt. Он поднимае
 
    Пароль и хеш нельзя публиковать или отправлять посторонним.
 
-3. Включите автозапуск и запустите сервис:
+2. Включите автозапуск и запустите сервис - кнопкой Start на странице
+   Services -> qWDTT в LuCI, или из шелла:
 
    ```sh
    /etc/init.d/qwdtt enable
