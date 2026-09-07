@@ -1,5 +1,10 @@
 # qWDTT OpenWrt
 
+[![Build](https://github.com/romankuznetsov/qwdtt-openwrt/actions/workflows/build.yml/badge.svg)](https://github.com/romankuznetsov/qwdtt-openwrt/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/romankuznetsov/qwdtt-openwrt)](https://github.com/romankuznetsov/qwdtt-openwrt/releases/latest)
+[![Release date](https://img.shields.io/github/release-date/romankuznetsov/qwdtt-openwrt)](https://github.com/romankuznetsov/qwdtt-openwrt/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/romankuznetsov/qwdtt-openwrt/total)](https://github.com/romankuznetsov/qwdtt-openwrt/releases)
+
 RAW-IP клиент qWDTT для роутеров OpenWrt. Он поднимает интерфейс `qwdtt0` и
 направляет через туннель IPv4-трафик устройств локальной сети. Сам роутер
 сохраняет прямой доступ к WAN, поэтому соединения с VK TURN не зацикливаются.
