@@ -220,7 +220,7 @@ msgstr ""
 msgid "Stored in /etc/config/qwdtt. Save & Apply reloads the client."
 msgstr ""
 
-msgid "Reads /var/log/qwdtt.log, newest last. Refreshes every 5 seconds."
+msgid "Reads the system log (logread -e qwdtt), newest last. Refreshes every 5 seconds."
 msgstr ""
 
 msgid "Status"

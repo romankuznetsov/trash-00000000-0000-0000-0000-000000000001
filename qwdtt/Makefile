@@ -7,9 +7,9 @@
 # installed. luci-app-qwdtt depends on it instead of shipping it.
 #
 # It ships the service layer: the control script, the procd init script that
-# turns /etc/config/qwdtt into the client's command line, a default config, a
-# logrotate rule and the firewall zone. Everything except the client binary,
-# which is the separate qwdtt-client package.
+# turns /etc/config/qwdtt into the client's command line, a default config and
+# the firewall zone. Everything except the client binary, which is the separate
+# qwdtt-client package.
 
 include $(TOPDIR)/rules.mk
 
@@ -92,8 +92,6 @@ define Package/qwdtt/install
 	# 0600, not the 0644 INSTALL_CONF gives: this file holds the connection
 	# password once the user fills it in.
 	chmod 0600 $(1)/etc/config/qwdtt
-	$(INSTALL_DIR) $(1)/etc/logrotate.d
-	$(INSTALL_DATA) ./files/qwdtt.logrotate $(1)/etc/logrotate.d/qwdtt
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/qwdtt.defaults $(1)/etc/uci-defaults/99-qwdtt
 endef

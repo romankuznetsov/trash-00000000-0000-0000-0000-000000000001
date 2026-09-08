@@ -11,11 +11,8 @@
 # and stop. It deliberately has no netifd interface: adding one made netifd
 # flush the daemon's address and route.
 #
-# Client output goes to /var/log/qwdtt.log (tmpfs) rather than syslog, because
-# the client prints a stats line every 3s. Retention is logrotate's job and is
-# not shipped by this package, since it belongs with whatever deploys the
-# client: an /etc/logrotate.d/qwdtt doing daily, three kept, copy-truncated so
-# the running daemon keeps its descriptor.
+# Client output goes to the system log (procd stdout/stderr); read it with
+# 'logread -e qwdtt'. logd owns retention, so there is no log file to rotate.
 #
 # 'heal' exists because a live process is not a working tunnel: after an uplink
 # change the client can complete its handshake and print "TUN connected" while
@@ -43,9 +40,7 @@
 #   fwmark 2              policy-routes a marked packet into the tunnel, which
 #                         is what makes the end-to-end probe test the tunnel
 #                         rather than the WAN
-#   /var/log/qwdtt.log    where the client writes; retention is logrotate's
 #
-LOGFILE=/var/log/qwdtt.log
 RT_TABLE=51820                  # routing table the tunnel's route and rule live in
 # The interface the client creates, read from UCI rather than hardcoded because
 # the LuCI page reads the same option: hardcoded, setting tun_name made the page
@@ -108,11 +103,10 @@ tunnel_ok() {
 # log is dense with session lines, so "the last 60 lines" covered only seconds
 # and the check reported no activity while the client was clearly working.
 struggle_marks() {
-	[ -f "$LOGFILE" ] || { echo 0; return; }
 	# `|| :` and not `|| echo 0`: grep -c already prints its count and then
 	# exits 1 when that count is zero, so the fallback used to append a second
 	# line and the function returned "0\n0".
-	n=$(grep -acE "Relay quota exhausted|Allocation Quota Reached|Uplink changed|Preferred address changed" "$LOGFILE" 2>/dev/null || :)
+	n=$(logread -e qwdtt 2>/dev/null | grep -acE "Relay quota exhausted|Allocation Quota Reached|Uplink changed|Preferred address changed" || :)
 	echo "${n:-0}"
 }
 
@@ -268,8 +262,8 @@ report_static() {
 	pp=$(uci -q get qwdtt.main.peer_port || :)
 	echo "peer:      ${ph}${pp:+:$pp}"
 	echo "hashes:    $(uci -q get qwdtt.main.hash | wc -w) configured"
-	echo "traffic:   $(grep -a 'STATS' "$LOGFILE" 2>/dev/null | tail -1 | sed 's/.*\[STATS\] //')"
-	echo "log:       $LOGFILE ($(wc -l < "$LOGFILE" 2>/dev/null || echo 0) lines)"
+	echo "traffic:   $(logread -e qwdtt 2>/dev/null | grep -a 'STATS' | tail -1 | sed 's/.*\[STATS\] //')"
+	echo "log:       logread -e qwdtt"
 }
 
 # The end-to-end probe alone, so the page's button can show its result instead
@@ -298,14 +292,14 @@ status)
 	report_static
 	report_tunnel
 	echo "--- recent log ---"
-	grep -aviE 'STATS|DEBUG' "$LOGFILE" 2>/dev/null | tail -8
+	logread -e qwdtt 2>/dev/null | grep -aviE 'STATS|DEBUG' | tail -8
 	;;
 brief)
 	report_static ;;
 tunnel)
 	report_tunnel ;;
 log)
-	tail -n "${2:-50}" "$LOGFILE" 2>/dev/null
+	logread -e qwdtt 2>/dev/null | tail -n "${2:-50}"
 	;;
 heal)
 	# Serialised against netchange so cron and an uplink event cannot both
@@ -325,7 +319,7 @@ heal-bg)
 	# button while cron's heal is already running.
 	if flock -n 9 9>"$HEAL_LOCK"; then
 		setsid "$0" __heal_now >/dev/null 2>&1 &
-		echo "heal started in the background; follow it with 'logread -f | grep qwdtt:'"
+		echo "heal started in the background; follow it with 'logread -e qwdtt -f'"
 	else
 		echo "a heal is already running; not starting another"
 	fi

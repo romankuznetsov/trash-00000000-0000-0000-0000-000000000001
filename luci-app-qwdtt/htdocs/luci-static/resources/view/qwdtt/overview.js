@@ -576,7 +576,7 @@ return view.extend({
 
 			var logsPane = E('div', {}, [
 				E('div', { 'class': 'cbi-section-descr' },
-					_('Reads /var/log/qwdtt.log, newest last. Refreshes every 5 seconds.')),
+					_('Reads the system log (logread -e qwdtt), newest last. Refreshes every 5 seconds.')),
 				logBox
 			]);
 

@@ -2,7 +2,6 @@
 
 USE_PROCD=1
 
-LOGFILE=/var/log/qwdtt.log
 START=95
 STOP=10
 
@@ -72,8 +71,6 @@ start_service() {
 		QW_LAN_IFACE="$lan_interface" \
 		QW_BOOLS="$bools" \
 		TZ="$(uci -q get system.@system[0].zonename)"
-	# Output to LOGFILE, not procd's syslog: the client prints a statistics
-	# line every three seconds, which would flood logread.
 	procd_set_param command /bin/sh -c 'exec /usr/bin/qwdtt-client \
 		-mode "$QW_MODE" \
 		-peer "$QW_PEER" \
@@ -88,7 +85,10 @@ start_service() {
 		-vk-anon-path "$QW_VK_ANON_PATH" \
 		-tun-name "$QW_TUN_NAME" \
 		${QW_LAN_IFACE:+-lan-interface "$QW_LAN_IFACE"} \
-		$QW_BOOLS >>'"$LOGFILE"' 2>&1'
+		$QW_BOOLS'
+	# stdout/stderr to the system log; read with 'logread -e qwdtt'.
+	procd_set_param stdout 1
+	procd_set_param stderr 1
 	procd_set_param respawn 10 5 0
 	procd_set_param limits nofile="65535 65535"
 	procd_close_instance

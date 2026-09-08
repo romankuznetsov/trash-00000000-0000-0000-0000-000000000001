@@ -224,8 +224,8 @@ msgstr "Не удалось прочитать журнал:"
 msgid "Stored in /etc/config/qwdtt. Save & Apply reloads the client."
 msgstr "Хранится в /etc/config/qwdtt."
 
-msgid "Reads /var/log/qwdtt.log, newest last. Refreshes every 5 seconds."
-msgstr "Читает /var/log/qwdtt.log, новые записи внизу. Обновляется каждые 5 секунд."
+msgid "Reads the system log (logread -e qwdtt), newest last. Refreshes every 5 seconds."
+msgstr "Читает системный журнал (logread -e qwdtt), новые записи внизу. Обновляется каждые 5 секунд."
 
 msgid "Status"
 msgstr "Состояние"
