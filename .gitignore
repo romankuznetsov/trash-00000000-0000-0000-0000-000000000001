@@ -25,3 +25,6 @@
 # Never commit a signing key. The apk private key lives in the repo secret
 # APK_PRIVATE_KEY and in a password manager, never here.
 *private-key*.pem
+
+# Staged by CI before the SDK runs; never committed.
+/qwdtt-client/files/qwdtt-client

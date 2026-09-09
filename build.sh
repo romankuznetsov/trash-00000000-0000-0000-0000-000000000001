@@ -3,16 +3,10 @@
 set -eu
 
 FEEDNAME=qwdtt
-# The two arch-independent packages. qwdtt would also be built as a dependency
-# of luci-app-qwdtt, but naming it explicitly is what makes it asserted below
-# and keeps it building if that dependency ever goes away.
-PACKAGES='luci-app-qwdtt qwdtt'
-# qwdtt-client is 25.12-only, and not by choice: golang.org/x/crypto requires
-# go >= 1.25.0 and the 24.10 feed ships go 1.23.4, so the build stops before it
-# starts. The floor comes from the dependencies, not from our own go directive
-# -- the ipk side of this
-# feed therefore carries the two arch-independent packages only.
-PACKAGES_APK='qwdtt-client'
+# All three, on both SDKs. qwdtt and qwdtt-client would come in as dependencies
+# of luci-app-qwdtt anyway, but naming them explicitly is what makes them
+# asserted below, and keeps them building if that dependency ever goes away.
+PACKAGES='luci-app-qwdtt qwdtt qwdtt-client'
 # The '#v11' is a git ref for docker build, and it pins the same tag the
 # workflow does. Without it this tracked the action's default branch while CI
 # tracked whatever it had at the time, so the two could diverge silently.
@@ -46,7 +40,7 @@ usage() {
 usage: ./build.sh <command> [package...]
 
   ipk     build .ipk  (SDK $ARCH_IPK): $PACKAGES
-  apk     build .apk  (SDK $ARCH_APK): $PACKAGES $PACKAGES_APK
+  apk     build .apk  (SDK $ARCH_APK): $PACKAGES
   all     build both
   shell   interactive shell in the SDK container
   clean   remove $DISTDIR/
@@ -58,19 +52,18 @@ Naming packages builds only those:
 
 Expect a modest saving, not a fast loop. Most of a local run is fixed SDK
 setup -- feeds, defconfig and the toolchain -- which happens whatever is
-being built; what a narrower list avoids is the other packages' compile,
-which in practice means qwdtt-client's Go build. This is for checking that a
-package still assembles, not for iterating. Iterate with 'go test' and
-'go build' in client/, which take seconds, and 'sh -n' on the shell scripts.
+being built. This is for checking that a package still assembles, not for
+iterating. Iterate with 'go test' and 'go build' in client/, which take
+seconds, and 'sh -n' on the shell scripts.
 
 Output lands in $DISTDIR/<sdk>/bin/packages/*/$FEEDNAME/, one directory per
 SDK so 'all' keeps both formats instead of the second wiping the first.
 Requires Docker. The first run downloads the SDK image (~1 GB) and takes a
-while. The two arch-independent packages compile in seconds; qwdtt-client
-compiles a Go toolchain first and takes roughly half an hour cold.
+while; the packages themselves assemble in seconds.
 
-qwdtt-client is built from client/ in this checkout, so a local edit is
-picked up with no commit, tag or hash to update first.
+The client binary is cross-compiled from client/ in this checkout before the
+SDK runs, so a local edit is picked up with no commit, tag or hash to update
+first. That needs a Go toolchain on the host.
 EOF
 }
 
@@ -86,13 +79,17 @@ build() {
 	shift
 	_image="sdk-$FEEDNAME:$_arch"
 	_pkgs=$PACKAGES
-	if [ "$_arch" = "$ARCH_APK" ]; then
-		_pkgs="$PACKAGES $PACKAGES_APK"
-	fi
 	# An explicit list replaces the default rather than adding to it.
 	if [ $# -gt 0 ]; then
 		_pkgs="$*"
 	fi
+
+	# qwdtt-client installs a prebuilt binary, and qwdtt depends on it, so the
+	# SDK needs one staged whatever is being built. Both SDKs here are x86_64.
+	echo "--- cross-compiling the client"
+	( cd client && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+		go build -tags=openwrt -trimpath -ldflags="-s -w" \
+		-o ../qwdtt-client/files/qwdtt-client . )
 	# One output directory per SDK. `all` calls this twice and the entrypoint
 	# ends with `mv bin/ /artifacts/`, so a single shared directory can only go
 	# wrong both ways: cleaned before each build the second run deletes the

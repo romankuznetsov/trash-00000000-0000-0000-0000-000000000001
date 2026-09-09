@@ -55,7 +55,10 @@ define Package/qwdtt
   # -I <address> is not a third option. It sets the source only, so the
   # packet leaves by the default route: measured at the WAN's 39ms, reporting
   # a healthy tunnel it never entered.
-  DEPENDS:=+iputils-ping
+  #
+  # The init script execs /usr/bin/qwdtt-client, so the service is dead
+  # without it.
+  DEPENDS:=+iputils-ping +qwdtt-client
   # POSIX shell only: nothing is compiled, so one build serves every target.
   PKGARCH:=all
 endef

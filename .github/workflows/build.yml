@@ -139,24 +139,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # pkgarch is the OpenWrt package architecture for the 24.10 .ipk, the
-        # same four the 25.12 apk feed targets, so both cover identical
-        # hardware. name is the generic label the tarball carries.
         include:
           - name: x86_64
             goarch: amd64
-            pkgarch: x86_64
           - name: aarch64
             goarch: arm64
-            pkgarch: aarch64_cortex-a53
           - name: armv7
             goarch: arm
             goarm: "7"
-            pkgarch: arm_cortex-a7_neon-vfpv4
           - name: mipsel
             goarch: mipsle
             gomips: softfloat
-            pkgarch: mipsel_24kc
 
     steps:
       - name: Check out
@@ -199,26 +192,6 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      # A 24.10 (opkg) .ipk from the same static binary. The 24.10 SDK cannot
-      # compile the Go client (Go floor), so this wraps the prebuilt ELF into an
-      # .ipk by hand -- no SDK Go toolchain, no signing. It is what lets a 24.10
-      # user install the client through LuCI with no SSH, next to the
-      # architecture-'all' .ipk the packages job builds; the 25.12 feed ships the
-      # client as a source-built .apk, so this is 24.10's counterpart. Version
-      # comes from the qwdtt-client Makefile so there is one source of truth.
-      - name: Pack the client ipk (OpenWrt 24.10, opkg)
-        run: |
-          ver="$(sed -n 's/^PKG_VERSION:=//p' qwdtt-client/Makefile)-$(sed -n 's/^PKG_RELEASE:=//p' qwdtt-client/Makefile)"
-          sh tools/pack-client-ipk.sh dist/qwdtt-client "${{ matrix.pkgarch }}" "$ver" dist
-
-      - name: Upload the client ipk
-        uses: actions/upload-artifact@v7
-        with:
-          name: client-ipk-${{ matrix.pkgarch }}
-          path: dist/qwdtt-client_*_${{ matrix.pkgarch }}.ipk
-          if-no-files-found: error
-          retention-days: 90
-
   packages:
     name: packages ${{ matrix.label }}
     needs: [changes, check]
@@ -248,6 +221,22 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: client/go.sum
+
+      # qwdtt depends on qwdtt-client, so the SDK builds that here too and needs
+      # its binary staged. Both SDKs in this matrix are x86_64.
+      - name: Cross-compile and stage the client
+        working-directory: client
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -tags=openwrt -trimpath -ldflags="-s -w" -o ../qwdtt-client/files/qwdtt-client .
+
       - name: Build with the OpenWrt SDK
         # Pinned, not @main. The action's entrypoint decides how the feed is
         # wired, which packages are built and where the output lands, so
@@ -259,9 +248,9 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           FEEDNAME: qwdtt
-          # qwdtt-client is deliberately absent: it needs go >= 1.25, which
-          # 24.10 cannot supply at all, and on 25.12 it costs half an hour.
-          # The client-packages job below builds it on tags.
+          # qwdtt-client is not named here, but qwdtt depends on it, so the SDK
+          # builds it anyway. The upload below drops it: client-packages is
+          # what publishes it, once per architecture.
           #
           # Only source packages are named. PACKAGES becomes
           # `make package/<name>/download`, so each entry must be a package
@@ -294,6 +283,7 @@ jobs:
           path: |
             bin/packages/*/qwdtt/*.ipk
             bin/packages/*/qwdtt/*.apk
+            !bin/packages/*/qwdtt/qwdtt-client*
           if-no-files-found: error
 
       - name: Upload build log on failure
@@ -305,60 +295,95 @@ jobs:
           if-no-files-found: ignore
 
   client-packages:
-    name: client package ${{ matrix.arch }}
+    name: client package ${{ matrix.sdk }}
     needs: check
-    # Tags only. Each of these compiles a Go toolchain inside the SDK before it
-    # compiles anything of ours, measured at ~30 minutes cold per architecture.
-    # Also on manual dispatch, so a change to how the client is compiled can be
-    # proven across every architecture without spending a tag to find out.
+    # Tags only, plus manual dispatch so a packaging change can be proven
+    # across every architecture without spending a tag to find out.
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        # A Go binary is architecture-specific, so unlike the two packages
-        # above this needs one build per target. The first two are the routers
-        # this is deployed to; the other two are what most consumer hardware
-        # runs -- mipsel_24kc covers ath79 and ramips, arm_cortex-a7 covers
-        # mt7621 and ipq40xx. Add an entry to serve another.
-        arch:
-          - x86_64-25.12.5
-          - aarch64_cortex-a53-25.12.5
-          - mipsel_24kc-25.12.5
-          - arm_cortex-a7_neon-vfpv4-25.12.5
+        # The binary is architecture-specific, so this needs one build per
+        # target -- and once per package format, since 24.10 emits .ipk and
+        # 25.12 .apk from the same sources. The first two arches are the
+        # routers this is deployed to; the other two are what most consumer
+        # hardware runs -- mipsel_24kc covers ath79 and ramips,
+        # arm_cortex-a7 covers mt7621 and ipq40xx.
+        include:
+          - sdk: x86_64-25.12.5
+            goarch: amd64
+          - sdk: aarch64_cortex-a53-25.12.5
+            goarch: arm64
+          - sdk: arm_cortex-a7_neon-vfpv4-25.12.5
+            goarch: arm
+            goarm: "7"
+          - sdk: mipsel_24kc-25.12.5
+            goarch: mipsle
+            gomips: softfloat
+          - sdk: x86_64-24.10.8
+            goarch: amd64
+          - sdk: aarch64_cortex-a53-24.10.8
+            goarch: arm64
+          - sdk: arm_cortex-a7_neon-vfpv4-24.10.8
+            goarch: arm
+            goarm: "7"
+          - sdk: mipsel_24kc-24.10.8
+            goarch: mipsle
+            gomips: softfloat
 
     steps:
       - name: Check out
         uses: actions/checkout@v7
 
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: client/go.sum
+
+      - name: Cross-compile and stage the client
+        working-directory: client
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          GOMIPS: ${{ matrix.gomips }}
+        run: go build -tags=openwrt -trimpath -ldflags="-s -w" -o ../qwdtt-client/files/qwdtt-client .
+
       - name: Build with the OpenWrt SDK
         uses: openwrt/gh-action-sdk@v11
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ matrix.sdk }}
           FEEDNAME: qwdtt
           PACKAGES: qwdtt-client
 
       - name: Show what was produced
         run: |
-          find bin -type f -name 'qwdtt-client*.apk' -print | sort
-          n=$(find bin/packages -type f -name 'qwdtt-client*.apk' | wc -l)
+          find bin -type f \
+            \( -name 'qwdtt-client*.ipk' -o -name 'qwdtt-client*.apk' \) -print | sort
+          n=$(find bin/packages -type f \
+                \( -name 'qwdtt-client*.ipk' -o -name 'qwdtt-client*.apk' \) | wc -l)
           test "$n" -gt 0 || { echo "qwdtt-client was not produced"; exit 1; }
 
       - name: Upload package
         uses: actions/upload-artifact@v7
         with:
-          name: client-package-${{ matrix.arch }}
-          path: bin/packages/*/qwdtt/qwdtt-client*.apk
+          name: client-package-${{ matrix.sdk }}
+          path: |
+            bin/packages/*/qwdtt/qwdtt-client*.ipk
+            bin/packages/*/qwdtt/qwdtt-client*.apk
           if-no-files-found: error
 
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: logs-client-${{ matrix.arch }}
+          name: logs-client-${{ matrix.sdk }}
           path: logs/
           if-no-files-found: ignore
 
