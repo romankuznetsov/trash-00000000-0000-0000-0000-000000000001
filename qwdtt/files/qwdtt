@@ -26,7 +26,7 @@
 #        qwdtt heal-bg     the same, detached, for callers that cannot wait
 #        qwdtt netchange   debounced heal, called by the procd triggers
 
-# What this script assumes but does not provide. All four come from whatever
+# What this script assumes but does not provide. All three come from whatever
 # deploys the client, and none of them is enforced here, so they are written
 # down rather than left to be rediscovered:
 #
@@ -35,11 +35,8 @@
 #   qwdtt.main.enabled    the init script reads it to decide whether to start
 #                         at boot, which is what start and stop write and what
 #                         the page's "start at boot" wording promises
-#   table 51820           the route and rule the client's traffic uses; only
-#                         reported here, never created
-#   fwmark 2              policy-routes a marked packet into the tunnel, which
-#                         is what makes the end-to-end probe test the tunnel
-#                         rather than the WAN
+#   table 51820           the route and rule the client creates for the LAN's
+#                         traffic; only reported here, never created
 #
 RT_TABLE=51820                  # routing table the tunnel's route and rule live in
 # The interface the client creates, read from UCI rather than hardcoded because
@@ -53,9 +50,9 @@ RT_TABLE=51820                  # routing table the tunnel's route and rule live
 # unset option kill the script before it printed anything.
 TUN=$(uci -q get qwdtt.main.tun_name || :)
 [ -n "$TUN" ] || TUN=qwdtt0
-TUNNEL_MARK=2                   # fwmark that policy-routes a probe into the tunnel
 PROBE_HOSTS='8.8.8.8 1.1.1.1'
 PROBE_COUNT=10                  # probes per host; loss matters, not reachability
+PROBE_DEADLINE=4                # seconds; caps the probe against a dead host
 MAX_LOSS=40                     # percent; above this the tunnel cannot carry TCP
 SETTLE=15                       # let a new uplink finish DHCP before probing
 WATCH=180                       # keep checking this long after an uplink change
@@ -82,9 +79,19 @@ in_other_netns() {
 # Parse the loss percentage, not the received count: ping prints the count as
 # "5 received," and the comma is part of the field, which silently yielded 0
 # and made this report a healthy tunnel dead.
+#
+# -I binds the device, so the probe leaves through the tunnel rather than the
+# default route. Confirmed by TTL against this router's uplink: 117 through the
+# tunnel, 108 without. -I with an ADDRESS would not do: that sets the source
+# only, the packet still leaves by the default route, and the probe reports a
+# healthy tunnel it never entered.
+#
+# -A rather than a fixed interval, because BusyBox ping takes whole seconds
+# only. Adaptive sends the next probe as soon as a reply arrives, so a healthy
+# tunnel finishes in well under a second, and -w caps a dead one.
 tunnel_ok() {
 	for h in $PROBE_HOSTS; do
-		loss=$(ping -c"$PROBE_COUNT" -i0.3 -W3 -m "$TUNNEL_MARK" "$h" 2>/dev/null |
+		loss=$(ping -c"$PROBE_COUNT" -A -w"$PROBE_DEADLINE" -I "$TUN" "$h" 2>/dev/null |
 			awk '{ for (i = 1; i <= NF; i++) if ($i ~ /%$/) { sub(/%$/, "", $i); print $i; exit } }')
 		loss=${loss%%.*}
 		[ -n "$loss" ] || loss=100
