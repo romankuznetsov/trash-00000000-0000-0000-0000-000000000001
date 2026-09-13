@@ -198,6 +198,9 @@ jobs:
     if: needs.changes.outputs.packages == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
@@ -207,9 +210,7 @@ jobs:
           # and 25.12 emits .apk from identical sources. Both packages here set
           # PKGARCH:=all, so one architecture serves every target.
           #
-          # Both pinned to a release. The bare x86_64 tag is the snapshot SDK,
-          # which does not ship the SDK inside the image and so downloads and
-          # extracts it on every run. Pinning also makes a red build mean
+          # Both pinned to a release, which is what makes a red build mean
           # something: on snapshot an upstream break and a break of ours are
           # indistinguishable.
           - label: 24.10 (ipk)
@@ -237,6 +238,13 @@ jobs:
           GOARCH: amd64
         run: go build -tags=openwrt -trimpath -ldflags="-s -w" -o ../qwdtt-client/files/qwdtt-client .
 
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build with the OpenWrt SDK
         # Pinned, not @main. The action's entrypoint decides how the feed is
         # wired, which packages are built and where the output lands, so
@@ -246,6 +254,10 @@ jobs:
         # statement while both run the same entrypoint.
         uses: openwrt/gh-action-sdk@v11
         env:
+          # Our own image rather than ghcr.io/openwrt/sdk, because the
+          # published ones unpack the SDK at container start instead of
+          # shipping it. See .github/workflows/sdk-images.yml.
+          CONTAINER: ghcr.io/${{ github.repository }}/sdk
           ARCH: ${{ matrix.arch }}
           FEEDNAME: qwdtt
           # qwdtt-client is not named here, but qwdtt depends on it, so the SDK
@@ -304,6 +316,9 @@ jobs:
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
@@ -355,9 +370,17 @@ jobs:
           GOMIPS: ${{ matrix.gomips }}
         run: go build -tags=openwrt -trimpath -ldflags="-s -w" -o ../qwdtt-client/files/qwdtt-client .
 
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build with the OpenWrt SDK
         uses: openwrt/gh-action-sdk@v11
         env:
+          CONTAINER: ghcr.io/${{ github.repository }}/sdk
           ARCH: ${{ matrix.sdk }}
           FEEDNAME: qwdtt
           PACKAGES: qwdtt-client
