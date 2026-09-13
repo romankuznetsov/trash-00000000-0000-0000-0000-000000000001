@@ -721,10 +721,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
-          arches="aarch64_cortex-a53 arm_cortex-a7_neon-vfpv4 mipsel_24kc x86_64"
           noarch="qwdtt luci-app-qwdtt luci-i18n-qwdtt-ru"
           names=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
                     --json assets -q '.assets[].name')
+
+          # Read the targets back off the client .ipk names rather than listing
+          # them here. A hardcoded list silently mis-sorts the moment the build
+          # matrix gains an architecture: the unknown one is classified as
+          # noarch, so it takes over an All row and the real noarch package
+          # vanishes from the table.
+          arches=$(echo "$names" |
+                   sed -n 's/^qwdtt-client_[^_]*_\(.*\)\.ipk$/\1/p' | sort -u)
+          test -n "$arches" || { echo "no client packages found in the release"; exit 1; }
+          echo "targets: $(echo $arches | tr '\n' ' ')"
 
           # A file belongs to a target if its name contains that pkgarch.
           link() {  # ext target -> <a> for its file, or N/A
