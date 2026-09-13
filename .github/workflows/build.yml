@@ -404,7 +404,7 @@ jobs:
     # site, so without the guard a contributor's dispatch goes red on
     # something that is not their problem.
     if: >-
-      github.repository == 'romankuznetsov/qwdtt-openwrt' &&
+      github.repository == 'romankuznetsov/trash-00000000-0000-0000-0000-000000000001' &&
       (startsWith(github.ref, 'refs/tags/v') ||
        github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
@@ -526,7 +526,7 @@ jobs:
     # Same guard as the feed job: a fork tagging its own work should not try to
     # publish a release here.
     if: >-
-      github.repository == 'romankuznetsov/qwdtt-openwrt' &&
+      github.repository == 'romankuznetsov/trash-00000000-0000-0000-0000-000000000001' &&
       startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
