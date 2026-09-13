@@ -25,6 +25,18 @@ Scope first, then a short subject: `client:`, `ci:`, `docs:`, `comments:`,
 reason that is not visible in the diff -- a constraint that forced it, or an
 exception that would otherwise look like an oversight.
 
+## Merging
+
+`main` takes pull requests only; direct pushes are refused for everyone,
+admins included. An agent opens the PR, pushes to its branch, and stops there.
+Merging is done by hand -- never by an agent -- so that a person has read the
+diff before it lands. `.claude/settings.json` denies `gh pr merge` to stop it
+happening by reflex, but the rule matters more than the guard: there is more
+than one way to merge a pull request.
+
+Release bumps are no exception. The `PKG_VERSION` commit goes through a PR
+like anything else, and the tag is pushed only once that has been merged.
+
 ## Language
 
 Code, comments, identifiers, log output and docs are English. No em dashes;
