@@ -17,6 +17,9 @@
 *.ipk
 *.apk
 
+# Per-machine Claude settings, sitting next to the shared .claude/settings.json.
+.claude/settings.local.json
+
 # editor and OS noise
 *.swp
 *~
