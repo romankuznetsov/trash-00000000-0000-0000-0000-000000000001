@@ -166,6 +166,9 @@ jobs:
           - name: mipsel
             goarch: mipsle
             gomips: softfloat
+          - name: mips
+            goarch: mips
+            gomips: softfloat
 
     steps:
       - name: Check out
@@ -341,9 +344,9 @@ jobs:
         # The binary is architecture-specific, so this needs one build per
         # target -- and once per package format, since 24.10 emits .ipk and
         # 25.12 .apk from the same sources. The first two arches are the
-        # routers this is deployed to; the other two are what most consumer
-        # hardware runs -- mipsel_24kc covers ath79 and ramips,
-        # arm_cortex-a7 covers mt7621 and ipq40xx.
+        # routers this is deployed to; the rest are what most consumer
+        # hardware runs -- mipsel_24kc covers ramips, mips_24kc the same core
+        # big-endian for ath79 and lantiq, arm_cortex-a7 mt7621 and ipq40xx.
         include:
           - sdk: x86_64-25.12.5
             goarch: amd64
@@ -355,6 +358,9 @@ jobs:
           - sdk: mipsel_24kc-25.12.5
             goarch: mipsle
             gomips: softfloat
+          - sdk: mips_24kc-25.12.5
+            goarch: mips
+            gomips: softfloat
           - sdk: x86_64-24.10.8
             goarch: amd64
           - sdk: aarch64_cortex-a53-24.10.8
@@ -364,6 +370,9 @@ jobs:
             goarm: "7"
           - sdk: mipsel_24kc-24.10.8
             goarch: mipsle
+            gomips: softfloat
+          - sdk: mips_24kc-24.10.8
+            goarch: mips
             gomips: softfloat
 
     steps:
@@ -460,14 +469,22 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
-      # The apk side only. The 24.10 artifacts are .ipk, which need a usign
-      # key-build and an opkg-style index rather than this one.
+      # The two formats land in separate directories because both artifacts
+      # carry an x86_64/qwdtt/ and would otherwise overwrite each other.
       - name: Download the apk packages
         uses: actions/download-artifact@v8
         with:
           name: packages-x86_64-25.12.5
-          path: staged
+          path: staged-apk
 
+      - name: Download the ipk packages
+        uses: actions/download-artifact@v8
+        with:
+          name: packages-x86_64-24.10.0
+          path: staged-ipk
+
+      # The clients can share one directory: an architecture's .ipk and .apk
+      # differ by extension, and each is picked up by its own glob below.
       - name: Download the client packages
         uses: actions/download-artifact@v8
         with:
@@ -475,20 +492,34 @@ jobs:
           merge-multiple: true
           path: staged
 
+      # Keyed by OpenWrt release, because the format follows the release: 24.10
+      # reads an opkg Packages index, 25.12 an apk packages.adb, and a router
+      # needs the one its package manager understands.
+      #
       # Every architecture's directory gets that architecture's client plus the
       # three noarch packages, so one feed URL serves a router everything.
       - name: Assemble the feed
         run: |
-          mkdir -p noarch
-          cp staged/x86_64/qwdtt/qwdtt-[0-9]*.apk \
-             staged/x86_64/qwdtt/luci-*.apk noarch/
+          mkdir -p noarch-apk noarch-ipk
+          cp staged-apk/x86_64/qwdtt/qwdtt-[0-9]*.apk \
+             staged-apk/x86_64/qwdtt/luci-*.apk noarch-apk/
+          cp staged-ipk/x86_64/qwdtt/qwdtt_[0-9]*.ipk \
+             staged-ipk/x86_64/qwdtt/luci-*.ipk noarch-ipk/
+
           for d in staged/*/qwdtt; do
             arch=$(basename "$(dirname "$d")")
-            mkdir -p "site/packages/$arch"
-            cp "$d"/qwdtt-client-*.apk "site/packages/$arch/" 2>/dev/null || true
-            cp noarch/*.apk "site/packages/$arch/"
+
+            if ls "$d"/qwdtt-client-*.apk >/dev/null 2>&1; then
+              mkdir -p "site/releases/25.12/$arch"
+              cp "$d"/qwdtt-client-*.apk noarch-apk/*.apk "site/releases/25.12/$arch/"
+            fi
+
+            if ls "$d"/qwdtt-client_*.ipk >/dev/null 2>&1; then
+              mkdir -p "site/releases/24.10/$arch"
+              cp "$d"/qwdtt-client_*.ipk noarch-ipk/*.ipk "site/releases/24.10/$arch/"
+            fi
           done
-          find site -name '*.apk' | sort
+          find site -type f \( -name '*.apk' -o -name '*.ipk' \) | sort
 
       - name: Sign the index
         env:
@@ -510,7 +541,7 @@ jobs:
             -v "$PWD:/w" -w /w ghcr.io/openwrt/sdk:x86_64-25.12.5 \
             sh -c 'umask 077
                    printf "%s\n" "$APK_PRIVATE_KEY" > /tmp/key.pem
-                   for d in /w/site/packages/*; do
+                   for d in /w/site/releases/25.12/*; do
                      ( cd "$d" && /builder/staging_dir/host/bin/apk mkndx \
                          --allow-untrusted \
                          --sign /tmp/key.pem \
@@ -520,17 +551,60 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" site
           find site -name packages.adb -exec ls -l {} \;
 
+      # opkg reads a plain-text Packages index and verifies Packages.sig with
+      # usign, which is a different key and a different tool from the apk side
+      # above. The 24.10 SDK is where both live.
+      - name: Sign the opkg index
+        env:
+          IPK_PRIVATE_KEY: ${{ secrets.IPK_PRIVATE_KEY }}
+        run: |
+          test -n "$IPK_PRIVATE_KEY" || {
+            echo "IPK_PRIVATE_KEY is not set; the 24.10 feed would be unusable"
+            exit 1
+          }
+
+          docker run --rm --user 0:0 -e IPK_PRIVATE_KEY \
+            -v "$PWD:/w" -w /w "ghcr.io/${{ github.repository }}/sdk:x86_64-24.10.8" \
+            sh -c 'set -e
+                   # The tight umask covers the key and nothing else. Applied
+                   # to the whole block it also lands on Packages, which the
+                   # verify step below then cannot read as a different user.
+                   ( umask 077; printf "%s\n" "$IPK_PRIVATE_KEY" > /tmp/key-build )
+                   # ipkg-make-index.sh hashes through $MKHASH, which the build
+                   # normally exports; unset it silently becomes `sha256`.
+                   export MKHASH=/builder/staging_dir/host/bin/mkhash
+                   for d in /w/site/releases/24.10/*; do
+                     ( cd "$d" && /builder/scripts/ipkg-make-index.sh . > Packages &&
+                       gzip -9nc Packages > Packages.gz &&
+                       /builder/staging_dir/host/bin/usign \
+                         -S -m Packages -s /tmp/key-build -x Packages.sig ) || exit 1
+                   done'
+
+          sudo chown -R "$(id -u):$(id -g)" site
+          find site -name 'Packages*' -exec ls -l {} \;
+
       # Verifying with the public key alone is the whole promise of the feed:
       # if this passes, a router that trusts this key installs without
       # --allow-untrusted.
       - name: Verify the index against the published public key
         run: |
           cp keys/qwdtt.pem site/qwdtt.pem
+          cp keys/qwdtt-usign.pub site/qwdtt-usign.pub
           docker run --rm -v "$PWD:/w" -w /w ghcr.io/openwrt/sdk:x86_64-25.12.5 \
             sh -c 'mkdir -p /tmp/k && cp /w/keys/qwdtt.pem /tmp/k/
-                   for i in /w/site/packages/*/packages.adb; do
+                   for i in /w/site/releases/25.12/*/packages.adb; do
                      printf "%s: " "$i"
                      /builder/staging_dir/host/bin/apk verify --keys-dir /tmp/k "$i" || exit 1
+                   done'
+
+          docker run --rm -v "$PWD:/w" -w /w \
+            "ghcr.io/${{ github.repository }}/sdk:x86_64-24.10.8" \
+            sh -c 'u=/builder/staging_dir/host/bin/usign
+                   echo "usign key id: $($u -F -p /w/keys/qwdtt-usign.pub)"
+                   for i in /w/site/releases/24.10/*/Packages; do
+                     printf "%s: " "$i"
+                     $u -V -m "$i" -p /w/keys/qwdtt-usign.pub -x "$i.sig" &&
+                       echo OK || exit 1
                    done'
 
       - name: Write the landing page
@@ -540,11 +614,23 @@ jobs:
             echo '<!doctype html><meta charset="utf-8">'
             echo "<title>qWDTT OpenWrt feed</title>"
             echo "<h1>qWDTT OpenWrt package feed</h1>"
-            echo "<p>Signed with <a href=\"qwdtt.pem\">qwdtt.pem</a>."
-            echo "Install that key once, then add one of these lines under"
-            echo "<em>System &rarr; Software &rarr; Configuration</em>:</p><pre>"
-            for d in site/packages/*; do
-              echo "$repo_url/packages/$(basename "$d")/packages.adb"
+            echo "<p>Pick the section matching your OpenWrt release. The"
+            echo "installer at <code>install.sh</code> does all of this for"
+            echo "you.</p>"
+
+            echo "<h2>OpenWrt 25.12 and later (apk)</h2>"
+            echo "<p>Key: <a href=\"qwdtt.pem\">qwdtt.pem</a>, into"
+            echo "<code>/etc/apk/keys/</code>. Then one of:</p><pre>"
+            for d in site/releases/25.12/*; do
+              echo "$repo_url/releases/25.12/$(basename "$d")/packages.adb"
+            done
+            echo '</pre>'
+
+            echo "<h2>OpenWrt 24.10 (opkg)</h2>"
+            echo "<p>Key: <a href=\"qwdtt-usign.pub\">qwdtt-usign.pub</a>, into"
+            echo "<code>/etc/opkg/keys/</code> named as its key id. Then one of:</p><pre>"
+            for d in site/releases/24.10/*; do
+              echo "src/gz qwdtt $repo_url/releases/24.10/$(basename "$d")"
             done
             echo '</pre>'
           } > site/index.html
@@ -600,12 +686,24 @@ jobs:
       # System -> Backup is the only way to place a file in /etc/apk/keys
       # without shell access: LuCI's package-manager Configuration modal edits
       # the repository lists and nothing else.
-      - name: Build the key archive
+      - name: Build the key archives
         run: |
-          mkdir -p keyroot/etc/apk/keys
-          cp keys/qwdtt.pem keyroot/etc/apk/keys/qwdtt.pem
-          tar -C keyroot -czf dist/qwdtt-apk-key.tar.gz etc
+          mkdir -p apkroot/etc/apk/keys
+          cp keys/qwdtt.pem apkroot/etc/apk/keys/qwdtt.pem
+          tar -C apkroot -czf dist/qwdtt-apk-key.tar.gz etc
           tar -tzvf dist/qwdtt-apk-key.tar.gz
+
+          # opkg finds a key by its id, so the file has to be named for it. A
+          # usign public key is a 2-byte algorithm tag followed by the 8-byte
+          # id, which is why this skips two and takes eight -- it saves running
+          # usign itself just to be told the name.
+          keyid=$(sed -n '2p' keys/qwdtt-usign.pub | base64 -d |
+                  od -An -tx1 -j2 -N8 | tr -d ' \n')
+          echo "usign key id: $keyid"
+          mkdir -p opkgroot/etc/opkg/keys
+          cp keys/qwdtt-usign.pub "opkgroot/etc/opkg/keys/$keyid"
+          tar -C opkgroot -czf dist/qwdtt-opkg-key.tar.gz etc
+          tar -tzvf dist/qwdtt-opkg-key.tar.gz
 
       - name: Publish
         env:

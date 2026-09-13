@@ -5,10 +5,10 @@
 #
 #   wget -qO- https://raw.githubusercontent.com/romankuznetsov/qwdtt-openwrt/main/install.sh | sh
 #
-# It adds the signed apk feed and its trust key, then installs the control
-# script, the LuCI page and the client. OpenWrt 25.x (apk) only: the client is
-# a 25.12+ package and the feed is APK v3. On 24.10 and older (opkg) there is no
-# ipk feed to subscribe to, so the script points at the Releases page instead.
+# It adds the signed feed and its trust key, then installs the control script,
+# the LuCI page and the client. Both package managers are served: 25.12 and
+# later read an apk index, 24.10 an opkg one, from separate paths under the
+# same site.
 #
 # It configures nothing and starts nothing: the peer, password and call hashes
 # are secrets the operator supplies afterwards, over LuCI or UCI.
@@ -18,10 +18,12 @@ set -eu
 REPO_OWNER=romankuznetsov
 REPO_NAME=qwdtt-openwrt
 FEED_BASE="https://${REPO_OWNER}.github.io/${REPO_NAME}"
-RELEASES_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest"
 
-KEY_DEST=/etc/apk/keys/qwdtt.pem
-FEED_LIST=/etc/apk/repositories.d/customfeeds.list
+# A file of our own rather than a line appended to customfeeds: re-running is
+# then a write instead of a duplicate, and removing us is a single rm.
+APK_KEY_DEST=/etc/apk/keys/qwdtt.pem
+APK_FEED_LIST=/etc/apk/repositories.d/qwdtt.list
+OPKG_FEED_CONF=/etc/opkg/qwdtt.conf
 
 # The three qWDTT packages, plus ip-full: the client policy-routes with
 # `ip rule`/`ip route ... table`, which BusyBox ip does not fully implement, and
@@ -97,7 +99,7 @@ install_via_feed() {
 	[ -n "$arch" ] || die "could not determine the package architecture."
 
 	key_url="$FEED_BASE/qwdtt.pem"
-	feed_url="$FEED_BASE/packages/$arch/packages.adb"
+	feed_url="$FEED_BASE/releases/25.12/$arch/packages.adb"
 
 	msg "architecture: $arch"
 
@@ -105,17 +107,13 @@ install_via_feed() {
 	# verifies and the packages install trusted (no --allow-untrusted).
 	msg "trust key:    $key_url"
 	mkdir -p /etc/apk/keys /etc/apk/repositories.d
-	fetch "$key_url" "$KEY_DEST" ||
+	fetch "$key_url" "$APK_KEY_DEST" ||
 		die "could not download the trust key from $key_url"
-	grep -q "BEGIN PUBLIC KEY" "$KEY_DEST" 2>/dev/null ||
+	grep -q "BEGIN PUBLIC KEY" "$APK_KEY_DEST" 2>/dev/null ||
 		die "the downloaded trust key is not a PEM public key -- is the feed published?"
 
 	msg "feed:         $feed_url"
-	if [ -f "$FEED_LIST" ] && grep -qxF "$feed_url" "$FEED_LIST"; then
-		msg "feed already present in $FEED_LIST"
-	else
-		echo "$feed_url" >>"$FEED_LIST"
-	fi
+	printf '%s\n' "$feed_url" >"$APK_FEED_LIST"
 
 	msg "apk update"
 	apk update
@@ -133,15 +131,49 @@ install_via_feed() {
 	post_install_hint
 }
 
-opkg_notice() {
+install_via_opkg() {
 	arch=$(detect_pkgarch)
-	warn "opkg detected (OpenWrt 24.10 or older)."
-	warn "There is no ipk feed to subscribe to: the client is a 25.12+ package"
-	warn "and the signed feed is APK v3. Install by hand from the latest release:"
-	warn "  $RELEASES_URL"
-	warn "    - qwdtt_*.ipk and luci-app-qwdtt_*.ipk        (architecture 'all')"
-	warn "    - the qwdtt-openwrt-<arch>.tar.gz client binary for '${arch:-your arch}'"
-	die "opkg feed install is not supported; see the release assets above."
+	[ -n "$arch" ] || die "could not determine the package architecture."
+
+	key_url="$FEED_BASE/qwdtt-usign.pub"
+	feed_url="$FEED_BASE/releases/24.10/$arch"
+
+	msg "architecture: $arch"
+
+	command -v usign >/dev/null 2>&1 ||
+		die "usign is missing, so opkg cannot verify a signed feed. Install it first."
+
+	msg "trust key:    $key_url"
+	mkdir -p /etc/opkg/keys
+	fetch "$key_url" /tmp/qwdtt-usign.pub ||
+		die "could not download the trust key from $key_url"
+
+	# The file name under /etc/opkg/keys has to be the key's own id: opkg reads
+	# the signer id out of the signature and looks for a file of that name.
+	keyid=$(usign -F -p /tmp/qwdtt-usign.pub 2>/dev/null) ||
+		die "the downloaded trust key is not a usign public key -- is the feed published?"
+	[ -n "$keyid" ] ||
+		die "the downloaded trust key is not a usign public key -- is the feed published?"
+	mv /tmp/qwdtt-usign.pub "/etc/opkg/keys/$keyid"
+	msg "key id:       $keyid"
+
+	msg "feed:         $feed_url"
+	printf 'src/gz qwdtt %s\n' "$feed_url" >"$OPKG_FEED_CONF"
+
+	msg "opkg update"
+	opkg update
+
+	msg "installing: $CORE_PKGS"
+	# shellcheck disable=SC2086
+	opkg install $CORE_PKGS
+
+	if [ "$WANT_I18N" = 1 ]; then
+		opkg install "$I18N_PKG" ||
+			warn "could not install $I18N_PKG (translation only; skipping)"
+	fi
+
+	msg "done."
+	post_install_hint
 }
 
 post_install_hint() {
@@ -169,7 +201,7 @@ EOF
 if command -v apk >/dev/null 2>&1; then
 	install_via_feed
 elif command -v opkg >/dev/null 2>&1; then
-	opkg_notice
+	install_via_opkg
 else
 	die "no supported package manager (apk/opkg) found."
 fi

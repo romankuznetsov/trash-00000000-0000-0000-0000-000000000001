@@ -45,7 +45,7 @@ OpenWrt 25.x, `opkg` на 24.10.
    для `aarch64_cortex-a53`:
 
    ```
-   https://romankuznetsov.github.io/qwdtt-openwrt/packages/aarch64_cortex-a53/packages.adb
+   https://romankuznetsov.github.io/qwdtt-openwrt/releases/25.12/aarch64_cortex-a53/packages.adb
    ```
 
    Сохраните, затем нажмите "Update lists…".
@@ -54,33 +54,35 @@ OpenWrt 25.x, `opkg` на 24.10.
 
 #### OpenWrt 24.10 (opkg)
 
-apk-feed недоступен, но opkg ставит локальный `.ipk` без подписи, поэтому
-загрузка файлов работает. Клиент здесь - `.ipk` с уже собранным бинарником, а не
-сборка из исходников: SDK 24.10 её не осилит.
+Порядок тот же, что и для 25.x, но feed и ключ - свои: opkg читает индекс
+`Packages` и проверяет его подпись через `usign`.
 
-1. Со страницы [Releases](../../releases/latest) скачайте:
-   - `qwdtt_*.ipk` и `luci-app-qwdtt_*.ipk` (архитектура `all`);
-   - `qwdtt-client_*_<ARCH>.ipk` для своей архитектуры. Доступны четыре, те же,
-     что и в apk-feed для 25.x: `x86_64`, `aarch64_cortex-a53`,
-     `arm_cortex-a7_neon-vfpv4`, `mipsel_24kc`;
-   - при желании `luci-i18n-qwdtt-ru_*.ipk`.
-2. В System -> Software нажмите "Update lists…", затем установите зависимости
-   `ca-bundle`, `kmod-tun`, `ip-full` (поиском по списку).
-3. Там же кнопкой "Upload Package…" загрузите и установите каждый скачанный
-   `.ipk`.
+1. Установите ключ доверия. Скачайте `qwdtt-opkg-key.tar.gz` со страницы
+   [Releases](../../releases/latest) и восстановите архив в
+   System -> Backup / Flash Firmware -> "Restore". Он кладет публичный ключ в
+   `/etc/opkg/keys` под именем его key id.
+2. Добавьте feed. В System -> Software -> Configuration допишите строку для
+   своей архитектуры, например для `mips_24kc`:
+
+   ```
+   src/gz qwdtt https://romankuznetsov.github.io/qwdtt-openwrt/releases/24.10/mips_24kc
+   ```
+
+   Сохраните, затем нажмите "Update lists…".
+3. В System -> Software установите пакеты `qwdtt`, `luci-app-qwdtt`,
+   `qwdtt-client` и `ip-full`.
 
 ### Способ 2: одной командой (SSH)
 
-От `root` на роутере (OpenWrt 25.x, `apk`):
+От `root` на роутере (OpenWrt 25.x с `apk` или 24.10 с `opkg`):
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/romankuznetsov/qwdtt-openwrt/main/install.sh | sh
 ```
 
-Скрипт добавляет подписанный feed и его ключ доверия, затем ставит `qwdtt`,
-`luci-app-qwdtt`, `qwdtt-client` и зависимости. Флаг `-e` пропускает русский
-перевод LuCI. Для OpenWrt 24.10 и старше (`opkg`) apk-feed недоступен - см.
-Способ 1, раздел "OpenWrt 24.10".
+Скрипт сам определяет менеджер пакетов, добавляет подписанный feed и его ключ
+доверия, затем ставит `qwdtt`, `luci-app-qwdtt`, `qwdtt-client` и зависимости.
+Флаг `-e` пропускает русский перевод LuCI.
 
 ### После установки
 
@@ -151,6 +153,7 @@ ip route show table 51820
 | `x86_64` | x86-роутеры и виртуальные машины |
 | `aarch64` | современные ARM64-роутеры |
 | `armv7` | 32-битные ARMv7-устройства |
-| `mipsel` | старые MIPS little-endian роутеры |
+| `mipsel` | MIPS little-endian, в основном ramips |
+| `mips` | MIPS big-endian, в основном ath79 и lantiq |
 
 Перед скачиванием можно проверить архитектуру командой `uname -m`.
