@@ -43,6 +43,8 @@ jobs:
           - arm_cortex-a7_neon-vfpv4-25.12.5
           - mipsel_24kc-24.10.8
           - mipsel_24kc-25.12.5
+          - mips_24kc-24.10.8
+          - mips_24kc-25.12.5
 
     steps:
       - name: Check out
