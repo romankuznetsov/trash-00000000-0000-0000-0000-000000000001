@@ -233,7 +233,7 @@ jobs:
           # something: on snapshot an upstream break and a break of ours are
           # indistinguishable.
           - label: 24.10 (ipk)
-            arch: x86_64-24.10.0
+            arch: x86_64-24.10.8
           - label: 25.12 (apk)
             arch: x86_64-25.12.5
 
@@ -480,7 +480,7 @@ jobs:
       - name: Download the ipk packages
         uses: actions/download-artifact@v8
         with:
-          name: packages-x86_64-24.10.0
+          name: packages-x86_64-24.10.8
           path: staged-ipk
 
       # The clients can share one directory: an architecture's .ipk and .apk

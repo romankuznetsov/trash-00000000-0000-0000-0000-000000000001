@@ -22,7 +22,7 @@ DISTDIR=dist
 # the snapshot SDK, which does not ship the SDK inside the image and so
 # downloads and extracts it on every run -- around six times the wall clock,
 # for a moving target that makes a red build ambiguous.
-ARCH_IPK=x86_64-24.10.0
+ARCH_IPK=x86_64-24.10.8
 ARCH_APK=x86_64-25.12.5
 
 # Git Bash rewrites arguments that look like absolute Unix paths into Windows
