@@ -37,10 +37,30 @@ than one way to merge a pull request.
 Release bumps are no exception. The `PKG_VERSION` commit goes through a PR
 like anything else, and the tag is pushed only once that has been merged.
 
+## Reference only what the reader can see
+
+A code comment, a commit message, an issue or a pull request is read by someone
+who has the repository and nothing else. Everything outside it is invisible to
+them: files under `tmp/`, a branch that was never pushed, a scratch review
+document, and above all the short labels such documents use -- `C1`, `P1`,
+"proposal 2 of the review". Those read as if they were common knowledge and
+are not.
+
+Name the thing rather than its label. "the hardcoded target list in the
+download table" still means something a year from now; `P6` means nothing to a
+reader who never saw that list, and nothing to you either once the file is
+gone.
+
 ## Language
 
 Code, comments, identifiers, log output and docs are English. No em dashes;
 use `-`.
+
+Talking to people is Russian: issue and pull request titles and bodies, and
+every comment on them. The users and contributors of this project are mostly
+Russian-speaking, so that is where they read. The split is by audience, not by
+file -- an English PR describing a Russian-facing change reaches the wrong
+people, and a Russian identifier in the code reaches nobody at all.
 
 Two places keep Russian on purpose, both load-bearing:
 
