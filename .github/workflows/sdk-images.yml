@@ -1,13 +1,8 @@
 name: SDK images
 
-# Publishes one image per SDK the build uses, with the SDK already unpacked
-# inside it. build.yml points gh-action-sdk at these through CONTAINER, so
-# every tag listed here must match an `arch:` or `sdk:` value over there --
-# a name that is not published fails the build with a pull error.
-#
-# Run this after changing that list, and after moving an SDK version. Nothing
-# triggers it on a schedule: the versions are pinned, so a published image
-# stays correct until the pin moves.
+# One image per SDK the build uses, with the SDK already unpacked. Every tag
+# here must match an `arch:`/`sdk:` value in build.yml; one that is not
+# published fails the build with a pull error. Re-run after moving a pin.
 
 on:
   workflow_dispatch:
@@ -60,9 +55,8 @@ jobs:
       - name: Bake and push
         run: |
           image=ghcr.io/${{ github.repository }}/sdk:${{ matrix.sdk }}
-          # Built from stdin so the context is empty. The Dockerfile copies
-          # nothing, and the repository as context is megabytes of upload for
-          # no purpose.
+          # Empty context: the Dockerfile copies nothing, and the repository
+          # would be megabytes of upload for none.
           docker build \
             --build-arg "ARCH=${{ matrix.sdk }}" \
             --tag "$image" \
