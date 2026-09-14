@@ -1,10 +1,9 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Control script for the qWDTT RAW-IP tunnel. Driven by the LuCI page at
-# Services -> qWDTT, by cron ('heal') and by the procd interface triggers
-# ('netchange'), and useful directly over ssh. The last two are why this is a
-# package of its own rather than part of luci-app-qwdtt: a headless router
-# needs it with no web interface installed.
+# Services -> qWDTT and useful directly over ssh. A package of its own rather
+# than part of luci-app-qwdtt: a headless router needs it with no web
+# interface installed.
 #
 # The tunnel is a daemon-owned TUN device -- qwdtt0 unless tun_name says
 # otherwise -- and not a netifd interface, so the service is what you start
@@ -14,35 +13,26 @@
 # Client output goes to the system log (procd stdout/stderr); read it with
 # 'logread -e qwdtt'. logd owns retention, so there is no log file to rotate.
 #
-# 'heal' exists because a live process is not a working tunnel: after an uplink
-# change the client can complete its handshake and print "TUN connected" while
-# nothing traverses the session. Only an end-to-end probe detects that, so heal
-# probes through the tunnel and restarts the daemon until it answers.
-#
 # Usage: qwdtt start | stop | restart | status | log [n]
 #        qwdtt brief       the status fields, without the end-to-end probe
 #        qwdtt tunnel      the end-to-end probe on its own
-#        qwdtt heal        probe the tunnel, restart if dead (cron watchdog)
-#        qwdtt heal-bg     the same, detached, for callers that cannot wait
-#        qwdtt netchange   debounced heal, called by the procd triggers
 
 # What this script assumes but does not provide. All three come from whatever
 # deploys the client, and none of them is enforced here, so they are written
 # down rather than left to be rediscovered:
 #
-#   /etc/init.d/qwdtt     start, stop and restart delegate to it, and heal
-#                         restarts through it
+#   /etc/init.d/qwdtt     start, stop and restart delegate to it
 #   qwdtt.main.enabled    the init script reads it to decide whether to start
 #                         at boot, which is what start and stop write and what
 #                         the page's "start at boot" wording promises
-#   table 51820           the route and rule the client creates for the LAN's
+#   table 51820           the route the client creates for the LAN's
 #                         traffic; only reported here, never created
 #
 RT_TABLE=51820                  # routing table the tunnel's route and rule live in
 # The interface the client creates, read from UCI rather than hardcoded because
 # the LuCI page reads the same option: hardcoded, setting tun_name made the page
-# report the interface up while this reported it absent, and heal would then
-# restart a perfectly healthy tunnel forever. qwdtt0 is the client's default.
+# report the interface up while this reported it absent. qwdtt0 is the client's
+# default.
 #
 # `|| :` here and on every other uci read below. This script does not set -e so
 # it changes nothing today, but `uci -q get` exits 1 for a missing option and a
@@ -54,14 +44,6 @@ PROBE_HOSTS='8.8.8.8 1.1.1.1'
 PROBE_COUNT=10                  # probes per host; loss matters, not reachability
 PROBE_DEADLINE=4                # seconds; caps the probe against a dead host
 MAX_LOSS=40                     # percent; above this the tunnel cannot carry TCP
-SETTLE=15                       # let a new uplink finish DHCP before probing
-WATCH=180                       # keep checking this long after an uplink change
-POLL=15                         # seconds between checks inside the watch window
-GRACE=180                       # patience before a *repeat* restart
-CONFIRM=150                     # patience before the first restart
-RETRIES=2
-MAXRUN=900                      # hard stop: never hold the lock longer than this
-HEAL_LOCK=/var/lock/qwdtt-heal.lock
 
 # Are we in a different network namespace than the router itself? virt-shell
 # runs its shell inside 'nsclient', where the tunnel interface does not exist
@@ -101,138 +83,6 @@ tunnel_ok() {
 	return 1
 }
 
-# How many times the client has hit the VK quota wall or reacted to an uplink
-# change. Used as a progress signal: the count is compared against itself one
-# poll earlier, so no timestamp parsing and no assumption about the daemon's
-# timezone (it logs UTC while the system clock is local).
-#
-# A line-window version of this check failed in testing: during a reconnect the
-# log is dense with session lines, so "the last 60 lines" covered only seconds
-# and the check reported no activity while the client was clearly working.
-struggle_marks() {
-	# `|| :` and not `|| echo 0`: grep -c already prints its count and then
-	# exits 1 when that count is zero, so the fallback used to append a second
-	# line and the function returned "0\n0".
-	n=$(logread -e qwdtt 2>/dev/null | grep -acE "Relay quota exhausted|Allocation Quota Reached|Uplink changed|Preferred address changed" || :)
-	echo "${n:-0}"
-}
-
-# The real failure mode, seen on this router: the client binds each worker's
-# relay socket to one source address and never rebinds. After an uplink change
-# it re-establishes some workers and leaves the rest writing from the old
-# address, which the kernel refuses ("operation not permitted"). It still counts
-# those workers as active, so the tunnel half-works -- ICMP mostly survives
-# while TCP stalls. Comparing every socket against the source the kernel would
-# pick now is what detects that; waiting cannot fix it, only a restart can.
-binding_stale() {
-	want=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }')
-	[ -n "$want" ] || return 1
-	STALE_SOCKETS=$(netstat -unp 2>/dev/null | awk -v want="$want" '
-		/qwdtt-client/ { split($4, a, ":"); if (a[1] != want) n++ }
-		END { print n + 0 }')
-	[ "$STALE_SOCKETS" -gt 0 ]
-}
-
-# Keep the tunnel alive across uplink changes.
-#   $1 = seconds to wait before looking (let a new uplink finish DHCP)
-#   $2 = how long to keep watching afterwards
-#
-# Timings are measured on this router: a restart brings the tunnel back in ~25s,
-# whereas leaving the client to recover on its own took 260s. So confirm the
-# failure briefly and restart; only a *repeat* restart waits GRACE, because
-# restarting inside a convergence window resets it and thrashes.
-#
-# MAXRUN is not optional. Upgrading the package rewrites this file in place,
-# and a shell already executing it then reads mangled text -- one such instance
-# looped for 25 minutes holding the lock, which silently disabled every
-# trigger-driven heal. The hard stop guarantees the lock is always released.
-heal() {
-	# Never resurrect a tunnel the operator switched off, and stay quiet while
-	# the router has no uplink at all -- restarting cannot help either case.
-	[ "$(uci -q get qwdtt.main.enabled)" = "0" ] && return 0
-	ip route show | grep -q '^default' || return 0
-
-	[ "${1:-0}" -gt 0 ] && sleep "$1"
-	now=$(date +%s)
-	deadline=$(( now + ${2:-0} ))
-	hardstop=$(( now + MAXRUN ))
-	restarts=0
-	waited=0
-	reported=0
-	marks_prev=$(struggle_marks)
-
-	while :; do
-		# Re-read the switch every pass, not only on entry. A heal already
-		# inside this loop when the operator disables the tunnel would
-		# otherwise keep restarting it for up to MAXRUN: on 2026-09-02 two more
-		# restart attempts were logged after qwdtt.main.enabled had gone to 0.
-		# Not a failure, so return 0.
-		[ "$(uci -q get qwdtt.main.enabled)" = "0" ] && return 0
-
-		if [ "$(date +%s)" -ge "$hardstop" ]; then
-			logger -t qwdtt "heal exceeded ${MAXRUN}s, giving up to release the lock"
-			return 1
-		fi
-
-		if tunnel_ok; then
-			if [ "$restarts" -gt 0 ] && [ "$reported" = 0 ]; then
-				logger -t qwdtt "tunnel healthy after $restarts restart(s) ($TUNNEL_RESULT)"
-				reported=1
-			fi
-			[ "$(date +%s)" -ge "$deadline" ] && return 0
-			waited=0
-			sleep "$POLL"
-			continue
-		fi
-
-		# How long a failure must persist before restarting: briefly the first
-		# time, patiently afterwards.
-		if [ "$restarts" -eq 0 ]; then need=$CONFIRM; else need=$GRACE; fi
-
-		# Stale bindings used to restart the daemon at once, on the reasoning
-		# that waiting cannot fix them. That is no longer true: the client
-		# detects both a dead binding and a changed uplink preference and
-		# re-dials its sessions itself, staggered. Restarting instead drops all
-		# 18 sessions and re-Allocates them into VK's quota, so the same
-		# patience applies here -- this stays only as the backstop for a client
-		# that cannot recover.
-		if [ "$waited" -lt "$need" ]; then
-			waited=$((waited + POLL))
-			sleep "$POLL"
-			continue
-		fi
-		if binding_stale; then
-			reason="$STALE_SOCKETS relay socket(s) bound to a stale source address"
-		else
-			reason="tunnel unusable for ${waited}s ($TUNNEL_RESULT)"
-		fi
-
-		# The client recovers on its own once VK frees the old allocations, and
-		# restarting mid-flight forces every worker to re-Allocate into the same
-		# quota wall. So while the count keeps moving, the client is working:
-		# wait instead of interfering. This deliberately also defers the
-		# stale-socket case above -- the patched client re-dials those itself.
-		marks_now=$(struggle_marks)
-		if [ "$marks_now" != "$marks_prev" ]; then
-			marks_prev=$marks_now
-			waited=$((waited + POLL))
-			sleep "$POLL"
-			continue
-		fi
-
-		if [ "$restarts" -ge "$RETRIES" ]; then
-			logger -t qwdtt "tunnel still dead after $restarts restart(s), giving up"
-			return 1
-		fi
-		restarts=$((restarts + 1))
-		reported=0
-		logger -t qwdtt "$reason, restarting qwdtt (attempt $restarts)"
-		/etc/init.d/qwdtt restart
-		waited=0
-		sleep "$POLL"
-	done
-}
-
 # Everything readable without sending a packet, so the LuCI page can poll it
 # through `qwdtt brief` every few seconds.
 #
@@ -257,14 +107,6 @@ report_static() {
 		esac
 		echo "address:   $(ip -4 -o addr show "$TUN" 2>/dev/null | awk '{printf "%s ", $4}')"
 		echo "route:     $(ip route show table "$RT_TABLE" 2>/dev/null | head -1)"
-		# Every rule pointing at the table, not the first one. The client adds
-		# its own (iif <lan>, priority 10000) and that is the one that puts LAN
-		# traffic in the tunnel, but a deployment may add others ahead of it --
-		# head -1 then reported a rule this package knows nothing about while
-		# hiding the one worth checking.
-		echo "rule:      $(ip rule show 2>/dev/null |
-			awk -v t="$RT_TABLE" '$0 ~ "lookup " t {
-				sub(/^[ \t]+/, ""); printf "%s%s", sep, $0; sep = "; " }')"
 	elif in_other_netns; then
 		echo "interface: not visible from this network namespace"
 		echo "           ($TUN lives in the root namespace; the tunnel may be fine)"
@@ -286,7 +128,7 @@ report_tunnel() {
 	if tunnel_ok; then
 		echo "tunnel:    ok ($TUNNEL_RESULT)"
 	else
-		echo "tunnel:    DEAD ($TUNNEL_RESULT) -- run 'qwdtt heal'"
+		echo "tunnel:    DEAD ($TUNNEL_RESULT)"
 	fi
 }
 
@@ -315,46 +157,8 @@ tunnel)
 log)
 	logread -e qwdtt 2>/dev/null | tail -n "${2:-50}"
 	;;
-heal)
-	# Serialised against netchange so cron and an uplink event cannot both
-	# restart the daemon at the same moment.
-	( flock -n 9 || exit 0; heal 0 0 ) 9>"$HEAL_LOCK"
-	;;
-heal-bg)
-	# For callers that cannot wait: a heal runs until the tunnel answers or
-	# MAXRUN expires, which is far longer than a CGI request lives, so the LuCI
-	# button would report a failure precisely when the tunnel is dead and the
-	# heal is worth starting. Detach and say so instead.
-	#
-	# Contention is reported rather than hidden: plain `heal` exits 0 when the
-	# lock is held, which reaches a browser as a cheerful "Done." for work that
-	# never began. The test is advisory -- the detached copy takes the lock for
-	# real -- but it is right in the case that matters, an operator pressing the
-	# button while cron's heal is already running.
-	if flock -n 9 9>"$HEAL_LOCK"; then
-		setsid "$0" __heal_now >/dev/null 2>&1 &
-		echo "heal started in the background; follow it with 'logread -e qwdtt -f'"
-	else
-		echo "a heal is already running; not starting another"
-	fi
-	;;
-__heal_now)
-	# internal: the detached half of 'heal-bg'
-	( flock -n 9 || exit 0; heal 0 0 ) 9>"$HEAL_LOCK"
-	;;
-netchange)
-	# procd interface-trigger target. Uplink events arrive in bursts while the
-	# routes are still moving; restarting into that window produces a session
-	# the client calls connected but that carries no traffic. Detach so the
-	# trigger returns at once, then coalesce the burst behind the lock.
-	setsid "$0" __heal_delayed >/dev/null 2>&1 &
-	;;
-__heal_delayed)
-	# internal: the deferred half of 'netchange'
-	( flock -n 9 || exit 0; heal "$SETTLE" "$WATCH" ) 9>"$HEAL_LOCK"
-	;;
 *)
-	echo "usage: qwdtt start | stop | restart | status | brief | tunnel | log [n] | heal | heal-bg | netchange" >&2
+	echo "usage: qwdtt start | stop | restart | status | brief | tunnel | log [n]" >&2
 	exit 1
 	;;
 esac
