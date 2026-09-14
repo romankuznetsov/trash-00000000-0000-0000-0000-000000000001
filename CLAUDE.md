@@ -1,5 +1,16 @@
 # Working rules for this repo
 
+## Code
+
+KISS, and small. The best version of a change is the one that adds the least:
+fewer branches, fewer options, fewer layers, fewer lines to read before the
+intent is clear.
+
+Solve the case in front of you, not the ones someone might want later. An
+option, an abstraction or a helper added "for when we need it" is paid for on
+every read and usually never earns it back. Where extending and deleting are
+equally close, delete.
+
 ## Comments
 
 Code should read without commentary. Do not restate what the code already
