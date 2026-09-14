@@ -1,18 +1,5 @@
-# One repository, three things to build: the Go client, the OpenWrt packages
-# that wrap it, and the standalone tarballs that predate them.
-#
-# The jobs are split by cost rather than by product.
-#
-#   check, client      ~1 min, every push
-#   packages           ~8 min, only when a package directory changed
-#   client-packages    ~6 min per architecture, tags and dispatch only
-#
-# Publishing lives in release.yml, which calls this workflow and then acts
-# on the artifacts it leaves behind.
-#
-# The SDK arrives already unpacked, from the images sdk-images.yml publishes,
-# so a job no longer opens by downloading it. Most of what is left is the
-# kernel build that +kmod-tun pulls in.
+# Builds the client, the packages and the tarballs. Publishing is release.yml,
+# which calls this workflow and acts on the artifacts it leaves behind.
 ---
 name: Build
 
@@ -22,22 +9,15 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-  # release.yml calls this rather than repeating it. A called workflow runs
-  # in the caller's run, so the artifacts below are the ones it publishes,
-  # and github.ref/github.event_name here are the caller's -- which is why
-  # the tag conditions on client-packages still read correctly.
+  # Called by release.yml. github.ref and github.event_name are the caller's
+  # inside a called workflow, which is what the tag conditions below rely on.
   workflow_call:
 
 permissions:
   contents: read
 
-# Two pushes in quick succession would otherwise pay for two full builds, and
-# the first result is stale the moment the second lands. Grouping by ref keeps
-# main and a tag in separate groups, so publishing a release is never cancelled
-# by an unrelated push -- and tag runs opt out of cancellation entirely, since a
-# half-run release job is worse than a redundant one.
-# A group of its own: github.workflow resolves to the CALLER's name when
-# called, so sharing one expression would let a release cancel its own build.
+# A group of its own: github.workflow is the CALLER's name inside a called
+# workflow, so one shared expression would let a release cancel its own build.
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -46,10 +26,8 @@ env:
   GO_VERSION: "1.26.x"
 
 jobs:
-  # Most of the pipeline is wasted on a docs-only change. Diff it here and let
-  # the build jobs gate on the result: `code` guards the Go check and client
-  # build, `packages` guards the SDK packages. Tags and dispatches always
-  # build, so a release is never gated on a diff.
+  # Most of the pipeline is wasted on a docs-only change, so diff it here and
+  # let the build jobs gate on the result.
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -200,11 +178,6 @@ jobs:
           GOMIPS: ${{ matrix.gomips }}
         run: go build -tags=openwrt -trimpath -ldflags="-s -w" -o ../dist/qwdtt-client .
 
-      # The binary and its licence, nothing else. The archive used to carry an
-      # installer and a files/ tree, but those shipped a second /etc/init.d/qwdtt
-      # and /etc/config/qwdtt on a UCI schema the LuCI page does not use, so the
-      # two install paths contradicted each other. Packages are the install
-      # path now; this is for dropping the binary somewhere by hand.
       - name: Pack archive
         run: |
           cp LICENSE dist/
@@ -232,14 +205,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The reason for two entries is the package FORMAT rather than the
-          # architecture: OpenWrt replaced opkg with apk, so 24.10 emits .ipk
-          # and 25.12 emits .apk from identical sources. Both packages here set
-          # PKGARCH:=all, so one architecture serves every target.
-          #
-          # Both pinned to a release, which is what makes a red build mean
-          # something: on snapshot an upstream break and a break of ours are
-          # indistinguishable.
+          # Two entries for the package FORMAT, not the architecture: 24.10
+          # emits .ipk and 25.12 .apk from identical sources, and both
+          # packages set PKGARCH:=all.
           - label: 24.10 (ipk)
             arch: x86_64-24.10.0
           - label: 25.12 (apk)
@@ -273,38 +241,24 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build with the OpenWrt SDK
-        # Pinned, not @main. The action's entrypoint decides how the feed is
-        # wired, which packages are built and where the output lands, so
-        # tracking its default branch means an upstream commit can change this
-        # build without anything here changing. build.sh pins the same tag,
-        # because a green local build and a green CI run are only the same
-        # statement while both run the same entrypoint.
+        # Pinned: the entrypoint decides how the feed is wired and what gets
+        # built, so @main would let an upstream commit change this build.
         uses: openwrt/gh-action-sdk@v11
         env:
-          # Our own image rather than ghcr.io/openwrt/sdk, because the
-          # published ones unpack the SDK at container start instead of
-          # shipping it. See .github/workflows/sdk-images.yml.
+          # Ours, not ghcr.io/openwrt/sdk: the published images unpack the
+          # SDK at container start instead of shipping it. See sdk-images.yml.
           CONTAINER: ghcr.io/${{ github.repository }}/sdk
           ARCH: ${{ matrix.arch }}
           FEEDNAME: qwdtt
-          # qwdtt-client is not named here, but qwdtt depends on it, so the SDK
-          # builds it anyway. The upload below drops it: client-packages is
-          # what publishes it, once per architecture.
-          #
-          # Only source packages are named. PACKAGES becomes
-          # `make package/<name>/download`, so each entry must be a package
-          # DIRECTORY -- and luci-i18n-qwdtt-ru is not one. luci.mk defines it
-          # from the app's own Makefile by scanning po/*, so listing it fails
-          # with "No rule to make target". Building luci-app-qwdtt emits it;
-          # the next step asserts that.
+          # qwdtt-client is built anyway as a dependency and dropped from the
+          # upload below. Each entry must be a package DIRECTORY, which
+          # luci-i18n-qwdtt-ru is not: luci.mk generates it from po/*.
           PACKAGES: luci-app-qwdtt qwdtt
 
       - name: Show what was produced
         run: |
-          # The parentheses matter. Without them find reads this as
-          #   ( -name '*.ipk' ) OR ( -name '*.apk' AND -print )
-          # because -o binds looser than the implicit AND, so an action written
-          # after the -o applies only to the second branch.
+          # The parentheses matter: -o binds looser than the implicit AND, so
+          # without them -print would apply to the .apk branch alone.
           find bin -type f \( -name '*.ipk' -o -name '*.apk' \) -print | sort
           for want in luci-app-qwdtt luci-i18n-qwdtt-ru qwdtt; do
             n=$(find bin/packages -type f \
@@ -349,12 +303,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The binary is architecture-specific, so this needs one build per
-        # target -- and once per package format, since 24.10 emits .ipk and
-        # 25.12 .apk from the same sources. The first two arches are the
-        # routers this is deployed to; the rest are what most consumer
-        # hardware runs -- mipsel_24kc covers ramips, mips_24kc the same core
-        # big-endian for ath79 and lantiq, arm_cortex-a7 mt7621 and ipq40xx.
+        # One build per target per format. mipsel_24kc covers ramips,
+        # mips_24kc the same core big-endian for ath79 and lantiq,
+        # arm_cortex-a7 mt7621 and ipq40xx.
         include:
           - sdk: x86_64-25.12.5
             goarch: amd64

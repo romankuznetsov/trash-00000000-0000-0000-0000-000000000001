@@ -1,7 +1,5 @@
-# Publishing: the release on GitHub, and the signed feed on Pages.
-#
-# The building is build.yml's, called below rather than repeated, so a release
-# publishes exactly the artifacts a pull request would have built.
+# Publishing: the GitHub release and the signed feed on Pages. The building is
+# build.yml's, called below, so a release ships what a pull request built.
 ---
 name: Release
 
@@ -29,22 +27,14 @@ jobs:
       packages: read
     secrets: inherit
 
-  # A signed apk repository, which is the only way a LuCI-only user can install
-  # these. Uploading a package file through LuCI cannot work: its backend runs
-  # `apk add <file>` and never passes --allow-untrusted, and the individual
-  # .apk files are not signed with our key anyway -- OpenWrt's mkpkg takes no
-  # --sign, CONFIG_SIGNED_PACKAGES only signs the index. Signing the index here
-  # is what makes the packages trusted, because apk verifies the index and then
-  # trusts the packages by the hashes recorded in it.
+  # Signing the index is what makes the packages trusted: apk verifies the
+  # index, then trusts packages by the hashes in it. The individual .apk files
+  # are never signed.
   feed:
     name: publish feed
     needs: build
-    # Dispatch too, for the same reason as client-packages: publishing a feed
-    # has enough moving parts that proving it should not cost a tag.
-    #
-    # Only on this repository: a fork has neither APK_PRIVATE_KEY nor a Pages
-    # site, so without the guard a contributor's dispatch goes red on
-    # something that is not their problem.
+    # This repository only: a fork has neither the signing secrets nor a Pages
+    # site, so a contributor's dispatch would go red on something not theirs.
     if: >-
       github.repository == 'romankuznetsov/qwdtt-openwrt' &&
       (startsWith(github.ref, 'refs/tags/v') ||
@@ -86,12 +76,9 @@ jobs:
           merge-multiple: true
           path: staged
 
-      # Keyed by OpenWrt release, because the format follows the release: 24.10
-      # reads an opkg Packages index, 25.12 an apk packages.adb, and a router
-      # needs the one its package manager understands.
-      #
-      # Every architecture's directory gets that architecture's client plus the
-      # three noarch packages, so one feed URL serves a router everything.
+      # Keyed by OpenWrt release because the format follows it. Every
+      # architecture's directory also gets the three noarch packages, so one
+      # feed URL serves a router everything.
       - name: Assemble the feed
         run: |
           mkdir -p noarch-apk noarch-ipk
@@ -124,13 +111,9 @@ jobs:
             exit 1
           }
 
-          # The key is handed to the container through the environment and
-          # written inside it, so it never lands in the workspace. As root,
-          # because the bind mount is owned by the runner and the image's own
-          # user is a different uid -- it has to write packages.adb back out.
-          #
-          # The SDK image carries apk; the action's own image is only this plus
-          # an entrypoint, so the base serves here.
+          # The key goes in through the environment and is written inside the
+          # container, never the workspace. Root because the bind mount is the
+          # runner's and the image's own user is a different uid.
           docker run --rm --user 0:0 -e APK_PRIVATE_KEY \
             -v "$PWD:/w" -w /w ghcr.io/openwrt/sdk:x86_64-25.12.5 \
             sh -c 'umask 077
@@ -145,9 +128,8 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" site
           find site -name packages.adb -exec ls -l {} \;
 
-      # opkg reads a plain-text Packages index and verifies Packages.sig with
-      # usign, which is a different key and a different tool from the apk side
-      # above. The 24.10 SDK is where both live.
+      # opkg verifies Packages.sig with usign -- a different key and tool from
+      # the apk side above. The 24.10 SDK carries both.
       - name: Sign the opkg index
         env:
           IPK_PRIVATE_KEY: ${{ secrets.IPK_PRIVATE_KEY }}
@@ -160,9 +142,8 @@ jobs:
           docker run --rm --user 0:0 -e IPK_PRIVATE_KEY \
             -v "$PWD:/w" -w /w "ghcr.io/${{ github.repository }}/sdk:x86_64-24.10.8" \
             sh -c 'set -e
-                   # The tight umask covers the key and nothing else. Applied
-                   # to the whole block it also lands on Packages, which the
-                   # verify step below then cannot read as a different user.
+                   # Scoped to the key: over the whole block the umask also
+                   # lands on Packages, which verify then cannot read.
                    ( umask 077; printf "%s\n" "$IPK_PRIVATE_KEY" > /tmp/key-build )
                    # ipkg-make-index.sh hashes through $MKHASH, which the build
                    # normally exports; unset it silently becomes `sha256`.
@@ -177,9 +158,8 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" site
           find site -name 'Packages*' -exec ls -l {} \;
 
-      # Verifying with the public key alone is the whole promise of the feed:
-      # if this passes, a router that trusts this key installs without
-      # --allow-untrusted.
+      # The whole promise of the feed: if this passes, a router trusting these
+      # keys installs without --allow-untrusted.
       - name: Verify the index against the published public key
         run: |
           cp keys/qwdtt.pem site/qwdtt.pem
@@ -242,8 +222,7 @@ jobs:
   release:
     name: Publish release
     needs: build
-    # Same guard as the feed job: a fork tagging its own work should not try to
-    # publish a release here.
+    # Same guard as the feed job.
     if: >-
       github.repository == 'romankuznetsov/qwdtt-openwrt' &&
       startsWith(github.ref, 'refs/tags/v')
@@ -252,8 +231,6 @@ jobs:
       contents: write
 
     steps:
-      # Needed for keys/qwdtt.pem below. A job that only downloads artifacts
-      # still starts with an empty workspace.
       - name: Check out
         uses: actions/checkout@v7
 
@@ -263,11 +240,9 @@ jobs:
           merge-multiple: true
           path: dist
 
-      # A release asset is named by its basename, and an apk filename carries no
-      # architecture: both client builds arrive as qwdtt-client-<version>.apk
-      # and would collide, leaving one architecture unpublished. The
-      # architecture is the first path component inside the artifact, so fold
-      # it into the name. The .ipk side already carries an arch suffix.
+      # An apk filename carries no architecture, so every client build arrives
+      # as qwdtt-client-<version>.apk and they collide as release assets, which
+      # are keyed by basename. The arch is the artifact's first path component.
       - name: Name the client packages after their architecture
         run: |
           for f in dist/*/qwdtt/qwdtt-client-*.apk; do
@@ -276,10 +251,8 @@ jobs:
             mv "$f" "dist/$(basename "$f" .apk)-$arch.apk"
           done
 
-      # The trust key, shaped as an OpenWrt backup archive. Restoring it under
-      # System -> Backup is the only way to place a file in /etc/apk/keys
-      # without shell access: LuCI's package-manager Configuration modal edits
-      # the repository lists and nothing else.
+      # Shaped as an OpenWrt backup archive: restoring one under System ->
+      # Backup is the only way to place a key file without shell access.
       - name: Build the key archives
         run: |
           mkdir -p apkroot/etc/apk/keys
@@ -287,10 +260,9 @@ jobs:
           tar -C apkroot -czf dist/qwdtt-apk-key.tar.gz etc
           tar -tzvf dist/qwdtt-apk-key.tar.gz
 
-          # opkg finds a key by its id, so the file has to be named for it. A
-          # usign public key is a 2-byte algorithm tag followed by the 8-byte
-          # id, which is why this skips two and takes eight -- it saves running
-          # usign itself just to be told the name.
+          # opkg finds a key by its id, so the file must be named for it. A
+          # usign public key is a 2-byte algorithm tag then the 8-byte id --
+          # hence skip two, take eight.
           keyid=$(sed -n '2p' keys/qwdtt-usign.pub | base64 -d |
                   od -An -tx1 -j2 -N8 | tr -d ' \n')
           echo "usign key id: $keyid"
@@ -307,9 +279,8 @@ jobs:
             \( -name '*.tar.gz' -o -name '*.ipk' -o -name '*.apk' \) | sort)
           echo "$assets"
 
-          # Fail loudly rather than let the upload silently drop one of a pair:
-          # assets are keyed by basename, so two files sharing one cannot both
-          # be published.
+          # Assets are keyed by basename, so two files sharing one cannot both
+          # be published. Fail rather than silently drop one.
           dupes=$(echo "$assets" | xargs -n1 basename | sort | uniq -d)
           if [ -n "$dupes" ]; then
             echo "duplicate asset names:"
@@ -322,9 +293,8 @@ jobs:
             --title "qWDTT OpenWrt ${GITHUB_REF_NAME}" \
             --notes "Indexing assets..."
 
-      # Built after the upload, from the names GitHub actually stored: it
-      # rewrites characters it will not serve, so luci-i18n's `~` becomes `.`
-      # and a table built from the staging directory links to a 404.
+      # From the names GitHub stored, not the staging directory: it rewrites
+      # characters it will not serve, so luci-i18n's `~` becomes `.`.
       - name: Compose the download table
         env:
           GH_TOKEN: ${{ github.token }}
