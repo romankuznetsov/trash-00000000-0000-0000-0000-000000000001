@@ -609,39 +609,23 @@ jobs:
                        echo OK || exit 1
                    done'
 
-      - name: Write the landing page
+      - name: Generate the site
         run: |
-          repo_url="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}"
-          {
-            echo '<!doctype html><meta charset="utf-8">'
-            echo "<title>qWDTT OpenWrt feed</title>"
-            echo "<h1>qWDTT OpenWrt package feed</h1>"
-            echo "<p>Pick the section matching your OpenWrt release. The"
-            echo "installer at <code>install.sh</code> does all of this for"
-            echo "you.</p>"
+          .github/scripts/generate-feed-pages.sh site \
+            "https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}"
 
-            echo "<h2>OpenWrt 25.12 and later (apk)</h2>"
-            echo "<p>Key: <a href=\"qwdtt.pem\">qwdtt.pem</a>, into"
-            echo "<code>/etc/apk/keys/</code>. Then one of:</p><pre>"
-            for d in site/releases/25.12/*; do
-              echo "$repo_url/releases/25.12/$(basename "$d")/packages.adb"
-            done
-            echo '</pre>'
-
-            echo "<h2>OpenWrt 24.10 (opkg)</h2>"
-            echo "<p>Key: <a href=\"qwdtt-usign.pub\">qwdtt-usign.pub</a>, into"
-            echo "<code>/etc/opkg/keys/</code> named as its key id. Then one of:</p><pre>"
-            for d in site/releases/24.10/*; do
-              echo "src/gz qwdtt $repo_url/releases/24.10/$(basename "$d")"
-            done
-            echo '</pre>'
-          } > site/index.html
-          cat site/index.html
+      # The theme only exists in the github-pages gem set, so the site has to
+      # be built here; upload-pages-artifact serves the directory as-is.
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: site
+          destination: _site
 
       - name: Upload the site
         uses: actions/upload-pages-artifact@v5
         with:
-          path: site
+          path: _site
 
       - name: Deploy to Pages
         id: deploy
