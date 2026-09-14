@@ -36,9 +36,9 @@ PKG_LICENSE:=GPL-3.0-or-later
 LUCI_TITLE:=LuCI support for qWDTT
 LUCI_DESCRIPTION:=LuCI support for qWDTT
 # qwdtt is a sibling package in this feed providing /usr/bin/qwdtt, not
-# shipped here: cron and the procd interface triggers drive it with no browser
-# involved, so a headless router installs it alone. Depending on it means
-# installing this page still gets a working set of buttons.
+# shipped here: a headless router installs it alone, with no browser involved.
+# Depending on it means installing this page still gets a working set of
+# buttons.
 LUCI_DEPENDS:=+luci-base +qwdtt
 # Nothing here is compiled and nothing is architecture-specific: the package is
 # JavaScript, JSON and POSIX shell, so one build serves every target.

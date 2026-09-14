@@ -104,12 +104,6 @@ msgstr "Перезапустить"
 msgid "Restarts the daemon without changing boot behaviour"
 msgstr "Перезапускает демон, не меняя автозапуск"
 
-msgid "Heal"
-msgstr "Восстановить"
-
-msgid "Tests the tunnel and restarts the daemon only if it is dead"
-msgstr "Проверяет туннель и перезапускает демон только если он не работает"
-
 msgid "Testing..."
 msgstr "Проверка..."
 

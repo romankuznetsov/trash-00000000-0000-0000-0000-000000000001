@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # A plain package rather than a luci.mk one, and separate from luci-app-qwdtt
-# on purpose. This script is the tunnel's control layer: cron drives 'heal'
-# and the procd interface triggers drive 'netchange', neither of which
-# involves a browser, so a headless router needs it with no web interface
-# installed. luci-app-qwdtt depends on it instead of shipping it.
+# on purpose. This script is the tunnel's control layer and involves no
+# browser, so a headless router needs it with no web interface installed.
+# luci-app-qwdtt depends on it instead of shipping it.
 #
 # It ships the service layer: the control script, the procd init script that
 # turns /etc/config/qwdtt into the client's command line, a default config and
