@@ -33,10 +33,13 @@ jobs:
   feed:
     name: publish feed
     needs: build
-    # This repository only: a fork has neither the signing secrets nor a Pages
-    # site, so a contributor's dispatch would go red on something not theirs.
+    # Publishing repositories only: a fork has neither the signing secrets nor a
+    # Pages site, so a contributor's dispatch would go red on something not
+    # theirs. A repository variable rather than a hardcoded name, so the
+    # sandbox can rehearse a release without carrying a patched copy of this
+    # file -- which is how a sandbox-only edit nearly reached main once.
     if: >-
-      github.repository == 'romankuznetsov/qwdtt-openwrt' &&
+      vars.PUBLISH == 'true' &&
       (startsWith(github.ref, 'refs/tags/v') ||
        github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
@@ -207,7 +210,7 @@ jobs:
     needs: build
     # Same guard as the feed job.
     if: >-
-      github.repository == 'romankuznetsov/qwdtt-openwrt' &&
+      vars.PUBLISH == 'true' &&
       startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
