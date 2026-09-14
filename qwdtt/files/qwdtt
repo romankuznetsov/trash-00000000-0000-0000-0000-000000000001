@@ -25,7 +25,7 @@
 #   qwdtt.main.enabled    the init script reads it to decide whether to start
 #                         at boot, which is what start and stop write and what
 #                         the page's "start at boot" wording promises
-#   table 51820           the route and rule the client creates for the LAN's
+#   table 51820           the route the client creates for the LAN's
 #                         traffic; only reported here, never created
 #
 RT_TABLE=51820                  # routing table the tunnel's route and rule live in
@@ -107,14 +107,6 @@ report_static() {
 		esac
 		echo "address:   $(ip -4 -o addr show "$TUN" 2>/dev/null | awk '{printf "%s ", $4}')"
 		echo "route:     $(ip route show table "$RT_TABLE" 2>/dev/null | head -1)"
-		# Every rule pointing at the table, not the first one. The client adds
-		# its own (iif <lan>, priority 10000) and that is the one that puts LAN
-		# traffic in the tunnel, but a deployment may add others ahead of it --
-		# head -1 then reported a rule this package knows nothing about while
-		# hiding the one worth checking.
-		echo "rule:      $(ip rule show 2>/dev/null |
-			awk -v t="$RT_TABLE" '$0 ~ "lookup " t {
-				sub(/^[ \t]+/, ""); printf "%s%s", sep, $0; sep = "; " }')"
 	elif in_other_netns; then
 		echo "interface: not visible from this network namespace"
 		echo "           ($TUN lives in the root namespace; the tunnel may be fine)"
