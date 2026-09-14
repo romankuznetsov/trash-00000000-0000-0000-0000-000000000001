@@ -100,12 +100,6 @@ msgstr ""
 msgid "Restarts the daemon without changing boot behaviour"
 msgstr ""
 
-msgid "Heal"
-msgstr ""
-
-msgid "Tests the tunnel and restarts the daemon only if it is dead"
-msgstr ""
-
 msgid "Testing..."
 msgstr ""
 

@@ -79,10 +79,4 @@ start_service() {
 
 service_triggers() {
 	procd_add_reload_trigger qwdtt
-	# netchange rather than restart: uplink events arrive in bursts before the
-	# routes are final, and restarting then yields a session that handshakes
-	# and carries nothing.
-	for iface in wan; do
-		procd_add_interface_trigger "interface.*" "$iface" /usr/bin/qwdtt netchange
-	done
 }

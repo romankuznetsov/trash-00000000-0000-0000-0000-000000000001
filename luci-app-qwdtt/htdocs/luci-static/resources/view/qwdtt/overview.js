@@ -387,10 +387,9 @@ return view.extend({
 					_('Also stops it starting at boot')),
 				button(_('Restart'), 'restart', 'cbi-button-action',
 					_('Restarts the daemon without changing boot behaviour'))
-				/* Heal and Check tunnel are deliberately absent from the page
-				   for now. Both still exist as verbs: `qwdtt heal` is what cron
-				   and the procd triggers call, and `qwdtt tunnel` runs the probe
-				   on its own over ssh. */
+				/* Check tunnel is deliberately absent from the page for now.
+				   It still exists as a verb: `qwdtt tunnel` runs the probe on
+				   its own over ssh. */
 			])
 		]);
 
