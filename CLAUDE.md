@@ -44,16 +44,16 @@ like anything else, and the tag is pushed only once that has been merged.
 
 ## Reference only what the reader can see
 
-A code comment, a commit message, an issue or a pull request is read by someone
-who has the repository and nothing else. Everything outside it is invisible to
-them: files under `tmp/`, a branch that was never pushed, a scratch review
-document, and above all the short labels such documents use -- `C1`, `P1`.
-Those read as if they were common knowledge and are not.
+A code comment, a commit message, an issue or a pull request is read by
+someone who has the repository and nothing else. Everything outside it is
+invisible to them: files under ignored folders, a branch that was never
+pushed, a scratch review document, and above all the short labels such
+documents use. Those read as if they were common knowledge and are not.
 
 Name the thing rather than its label. "the hardcoded target list in the
-download table" still means something a year from now; `P6` means nothing to a
-reader who never saw that list, and nothing to you either once the file is
-gone.
+download table" still means something a year from now; a short label means
+nothing to a reader who never saw that list, and nothing to you either once
+the file is gone.
 
 ## Language
 
