@@ -65,25 +65,3 @@ every comment on them. The users and contributors of this project are mostly
 Russian-speaking, so that is where they read. The split is by audience, not by
 file -- an English PR describing a Russian-facing change reaches the wrong
 people, and a Russian identifier in the code reaches nobody at all.
-
-## Verifying a change
-
-The client is Linux-only (`listen.go` and `tun_fd.go` use `syscall.Handle`
-and `unix.CmsgSpace`), so a native Windows build fails and proves nothing:
-
-    cd client
-    GOOS=linux GOARCH=amd64 go build -tags=openwrt -o /dev/null .
-    GOOS=linux GOARCH=amd64 go vet -tags=openwrt ./...
-
-`-tags=openwrt` is not optional: without it the wrong raw-socket
-implementation is selected, and it is what the release workflow builds with.
-
-Tests need a Linux host to execute, so on Windows run them in a container
-(`MSYS_NO_PATHCONV=1` stops Git Bash rewriting `/src`):
-
-    MSYS_NO_PATHCONV=1 docker run --rm -v "<repo>:/src" -w /src/client \
-      golang:1.27-alpine go test -tags=openwrt ./...
-
-`gofmt -l` flags every file on a CRLF checkout, so on its own it says nothing.
-Seven files are unformatted in upstream's own history; compare against that
-set rather than expecting a clean run.
