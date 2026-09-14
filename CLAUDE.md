@@ -1,5 +1,11 @@
 # Working rules for this repo
 
+## Before coding
+
+Read the documentation first: this file, the README, and the other Markdown in
+the repository. Much of what looks like a free choice has already been decided
+there, and the reason is rarely visible from the code alone.
+
 ## Code
 
 KISS, and small. The best version of a change is the one that adds the least:
