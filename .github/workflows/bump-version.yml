@@ -1,0 +1,120 @@
+# Raises PKG_VERSION in the three packages together and opens the release pull
+# request. Run it, merge the pull request, then tag the merged commit.
+#
+# The tag is deliberately not pushed here: main takes pull requests only, so the
+# commit a tag must point at does not exist until a person has merged.
+---
+name: Bump version
+
+on:
+  workflow_dispatch:
+    inputs:
+      part:
+        description: Which part of the version to raise
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    name: bump and open the release pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          # Tags are needed to refuse a version that was already released.
+          fetch-depth: 0
+
+      - name: Bump and open a pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PART: ${{ inputs.part }}
+        run: |
+          set -eu
+
+          # Running this from a feature branch would put that branch's other
+          # commits into the release pull request.
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "run this on main; it is at $GITHUB_REF"
+            exit 1
+          fi
+
+          MKS="qwdtt/Makefile qwdtt-client/Makefile luci-app-qwdtt/Makefile"
+
+          # The three have to agree already. If they do not, the repository is
+          # in a state no single version describes, and papering over it here
+          # would only move the failure to the tag guard.
+          cur=""
+          for mk in $MKS; do
+            v=$(sed -n 's/^PKG_VERSION:=[[:space:]]*//p' "$mk" | tr -d '[:space:]')
+            [ -n "$cur" ] || cur=$v
+            if [ "$v" != "$cur" ]; then
+              echo "$mk is $v, but the first Makefile says $cur"
+              exit 1
+            fi
+          done
+
+          # Exactly three numeric components. Two would make the arithmetic
+          # below read the same field twice, four would feed it "0.4", and an
+          # empty value passes every shape test there is.
+          bad=0
+          case "$cur" in
+          "" | *[!0-9.]* | *..* | .* | *.) bad=1 ;;
+          esac
+          [ "$(printf '%s' "$cur" | tr -cd . | wc -c)" -eq 2 ] || bad=1
+          if [ "$bad" -ne 0 ]; then
+            echo "PKG_VERSION is '$cur', which is not x.y.z"
+            exit 1
+          fi
+
+          rest=${cur#*.}
+          major=${cur%%.*}
+          minor=${rest%%.*}
+          patch=${rest#*.}
+
+          case "$PART" in
+          major) major=$((major + 1)); minor=0; patch=0 ;;
+          minor) minor=$((minor + 1)); patch=0 ;;
+          patch) patch=$((patch + 1)) ;;
+          esac
+          new="$major.$minor.$patch"
+          echo "$cur -> $new"
+
+          if git rev-parse -q --verify "refs/tags/v$new" >/dev/null; then
+            echo "v$new is already tagged"
+            exit 1
+          fi
+
+          for mk in $MKS; do
+            sed -i "s/^PKG_VERSION:=.*/PKG_VERSION:=$new/" "$mk"
+            # PKG_RELEASE counts packaging revisions within one version, so a
+            # new version starts it over.
+            sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=1/" "$mk"
+          done
+          grep -H '^PKG_VERSION\|^PKG_RELEASE' $MKS
+
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          git checkout -q -b "release/v$new"
+          git commit -qam "release: $new"
+          git push -q origin "release/v$new"
+
+          # English, unlike every other pull request here: this one is opened by
+          # a workflow and read only by whoever releases, never by the users the
+          # Russian rule is for.
+          #
+          # A pull request opened with GITHUB_TOKEN does not start the build
+          # workflow, so this one arrives without checks. The tag guard and the
+          # release run cover it afterwards.
+          gh pr create --base main --head "release/v$new" \
+            --title "Release $new" \
+            --body "Raises PKG_VERSION to $new in qwdtt, qwdtt-client and
+          luci-app-qwdtt, and resets PKG_RELEASE to 1.
+
+          Merge this, then tag the merged commit \`v$new\` to publish."
