@@ -226,6 +226,9 @@ jobs:
           path: qwdtt-openwrt-${{ matrix.name }}.tar.gz
           if-no-files-found: error
           retention-days: 90
+          # A re-run uploads the same names again; without this the
+          # second attempt dies with a 409 before anything else runs.
+          overwrite: true
 
   packages:
     name: packages ${{ matrix.arch }}
@@ -324,6 +327,9 @@ jobs:
             bin/packages/*/qwdtt/*.apk
             !bin/packages/*/qwdtt/qwdtt-client*
           if-no-files-found: error
+          # A re-run uploads the same names again; without this the
+          # second attempt dies with a 409 before anything else runs.
+          overwrite: true
 
       - name: Upload build log on failure
         if: failure()
@@ -332,6 +338,9 @@ jobs:
           name: logs-${{ matrix.arch }}
           path: logs/
           if-no-files-found: ignore
+          # A re-run uploads the same names again; without this the
+          # second attempt dies with a 409 before anything else runs.
+          overwrite: true
 
   # The architectures are discovered from downloads.openwrt.org rather than
   # listed here, so one OpenWrt adds is built without an edit. It runs on every
@@ -443,6 +452,9 @@ jobs:
             bin/packages/*/qwdtt/qwdtt-client*.ipk
             bin/packages/*/qwdtt/qwdtt-client*.apk
           if-no-files-found: error
+          # A re-run uploads the same names again; without this the
+          # second attempt dies with a 409 before anything else runs.
+          overwrite: true
 
       - name: Upload build log on failure
         if: failure()
@@ -451,3 +463,6 @@ jobs:
           name: logs-client-${{ matrix.sdk }}
           path: logs/
           if-no-files-found: ignore
+          # A re-run uploads the same names again; without this the
+          # second attempt dies with a 409 before anything else runs.
+          overwrite: true

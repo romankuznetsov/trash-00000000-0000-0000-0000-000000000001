@@ -308,10 +308,21 @@ jobs:
             exit 1
           fi
 
-          gh release create "${GITHUB_REF_NAME}" $assets \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "qWDTT OpenWrt ${GITHUB_REF_NAME}" \
-            --notes "Indexing assets..."
+          # Re-running a release run rebuilds everything and arrives here with
+          # the release already published, where a plain create fails with
+          # "Release.tag_name already exists" and leaves the run red after the
+          # feed has already been republished. Uploading over it instead makes
+          # the whole workflow repeatable, which is what a re-run is for.
+          if gh release view "${GITHUB_REF_NAME}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release exists; replacing its assets"
+            gh release upload "${GITHUB_REF_NAME}" $assets \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" $assets \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "qWDTT OpenWrt ${GITHUB_REF_NAME}" \
+              --notes "Indexing assets..."
+          fi
 
       # Built after the upload, from the names GitHub actually stored: it
       # rewrites characters it will not serve, so luci-i18n's `~` becomes `.`
